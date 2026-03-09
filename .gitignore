@@ -3,3 +3,6 @@ __pycache__/
 *.pyo
 .venv/
 chess_analyzer/engines/
+chess_analyzer/config.json
+.idea/
+.claude/
