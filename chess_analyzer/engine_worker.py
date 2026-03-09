@@ -21,6 +21,7 @@ class EvalRequest:
     moves: list  # list[chess.Move]
     callback: Callable  # called on main thread with EvalResult
     depth: int = 15
+    progress_callback: Optional[Callable] = None  # fired after each move with partial EvalResult
 
 
 @dataclass
@@ -128,6 +129,15 @@ class EngineWorker:
                 score = info["score"]
                 self._cache[cache_key] = score
                 results[move.uci()] = score
+                if request.progress_callback:
+                    partial = EvalResult(
+                        request_id=request.request_id,
+                        move_evals=dict(results),
+                        board_fen=base_fen,
+                    )
+                    self._root.after(
+                        0, lambda r=partial, cb=request.progress_callback: cb(r)
+                    )
             except chess.engine.EngineTerminatedError:
                 break
             except Exception:

@@ -3,10 +3,13 @@ main.py
 Chess Analysis Tool — entry point.
 """
 
+import json
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from pathlib import Path
 import threading
+import urllib.parse
+import urllib.request
 
 import chess
 import chess.pgn
@@ -36,7 +39,7 @@ class ChessAnalyzerApp:
 
         self._pgn_path: str = ""
         self._depth_var = tk.IntVar(value=15)
-        self._mode_var = tk.StringVar(value="both")
+        self._mode_var = tk.StringVar(value="number")
 
         self._engine_worker: EngineWorker = None  # type: ignore
         self._board_ui: BoardUI = None  # type: ignore
@@ -154,9 +157,11 @@ class ChessAnalyzerApp:
             parent=board_frame,
             engine_worker=self._engine_worker,
             initial_board=chess.Board(),
-            display_mode="both",
+            display_mode="number",
             history_callback=self._update_history_display,
         )
+        self._board_ui.set_heatmap_mode(True)
+        self._board_ui.set_show_arrow(False)
 
         # Controls below
         controls_frame = tk.Frame(self._root, bg="#3C3F41", pady=4)
@@ -164,6 +169,61 @@ class ChessAnalyzerApp:
 
         self._build_load_panel(controls_frame)
         self._build_toggle_panel(controls_frame)
+
+        # Opening Explorer panel (hidden until toggled on)
+        self._explorer_cache: dict = {}
+        self._explorer_fetch_pending: str = ""
+        self._explorer_frame = tk.Frame(self._root, bg="#3C3F41", padx=6, pady=4)
+        # Not packed yet — appears when checkbox is enabled
+
+        # Token input row
+        config = self._load_config()
+        self._token_var = tk.StringVar(value=config.get("lichess_token", ""))
+        token_row = ttk.Frame(self._explorer_frame)
+        token_row.pack(anchor="w", pady=(0, 4))
+        ttk.Label(token_row, text="Lichess API Token:").pack(side="left")
+        ttk.Entry(token_row, textvariable=self._token_var, width=42).pack(side="left", padx=4)
+        ttk.Button(token_row, text="Save", command=self._save_token).pack(side="left")
+        ttk.Label(
+            token_row, text="  Get token at lichess.org/account/oauth/token",
+            foreground="#888888",
+        ).pack(side="left", padx=4)
+
+        self._explorer_status_var = tk.StringVar(value="")
+        ttk.Label(
+            self._explorer_frame,
+            textvariable=self._explorer_status_var,
+        ).pack(anchor="w")
+
+        cols = ("move", "games", "white", "draw", "black", "elo")
+        self._explorer_tree = ttk.Treeview(
+            self._explorer_frame, columns=cols, show="headings", height=6,
+        )
+        self._explorer_col_specs = [
+            ("move",  "Move",     70, "w"),
+            ("games", "Games",   110, "e"),
+            ("white", "White%",   65, "center"),
+            ("draw",  "Draw%",    60, "center"),
+            ("black", "Black%",   65, "center"),
+            ("elo",   "Avg Elo",  70, "center"),
+        ]
+        self._explorer_sort_col: str = "games"
+        self._explorer_sort_asc: bool = False
+        self._explorer_move_data: list = []
+        for col, heading, width, anchor in self._explorer_col_specs:
+            self._explorer_tree.heading(
+                col, text=heading,
+                command=lambda c=col: self._sort_explorer(c),
+            )
+            self._explorer_tree.column(col, width=width, anchor=anchor, stretch=False)
+        explorer_scroll = ttk.Scrollbar(
+            self._explorer_frame, orient="vertical",
+            command=self._explorer_tree.yview,
+        )
+        self._explorer_tree.configure(yscrollcommand=explorer_scroll.set)
+        self._explorer_tree.bind("<Double-1>", self._on_explorer_double_click)
+        self._explorer_tree.pack(side="left", fill="x")
+        explorer_scroll.pack(side="left", fill="y")
 
         # Arrow key navigation
         self._root.bind("<Left>",  lambda _: self._board_ui.navigate_prev())
@@ -269,6 +329,10 @@ class ChessAnalyzerApp:
                 frac = max(0.0, min(1.0, (btn_y - canvas_h // 2) / total_h))
                 self._hist_canvas.yview_moveto(frac)
 
+        # Refresh opening explorer for the new position
+        if hasattr(self, "_explorer_var") and self._explorer_var.get():
+            self._refresh_explorer()
+
     # ── Control panels ────────────────────────────────────────────────────────
 
     def _build_load_panel(self, parent: tk.Frame) -> None:
@@ -313,23 +377,14 @@ class ChessAnalyzerApp:
         frame = ttk.LabelFrame(parent, text="Eval Display", padding=6)
         frame.pack(fill="x", padx=6, pady=4)
 
-        for label, value in [("Bar", "bar"), ("Number", "number"), ("Both", "both")]:
-            ttk.Radiobutton(
-                frame, text=label,
-                variable=self._mode_var, value=value,
-                command=self._on_mode_change,
-            ).pack(side="left", padx=10)
-
-        ttk.Separator(frame, orient="vertical").pack(side="left", fill="y", padx=10)
-
-        self._heatmap_var = tk.BooleanVar(value=False)
+        self._heatmap_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             frame, text="Piece Heatmap",
             variable=self._heatmap_var,
             command=self._on_heatmap_change,
         ).pack(side="left", padx=6)
 
-        self._arrow_var = tk.BooleanVar(value=True)
+        self._arrow_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             frame, text="Best Move Arrow",
             variable=self._arrow_var,
@@ -341,6 +396,15 @@ class ChessAnalyzerApp:
             frame, text="⇅ Flip Board",
             variable=self._flip_var,
             command=self._on_flip_change,
+        ).pack(side="left", padx=6)
+
+        ttk.Separator(frame, orient="vertical").pack(side="left", fill="y", padx=10)
+
+        self._explorer_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            frame, text="Opening Explorer",
+            variable=self._explorer_var,
+            command=self._on_explorer_toggle,
         ).pack(side="left", padx=6)
 
     # ── Button handlers ───────────────────────────────────────────────────────
@@ -431,6 +495,190 @@ class ChessAnalyzerApp:
     def _on_flip_change(self) -> None:
         if self._board_ui:
             self._board_ui.set_flipped(self._flip_var.get())
+
+    def _load_config(self) -> dict:
+        path = Path(__file__).parent / "config.json"
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def _save_config(self, data: dict) -> None:
+        path = Path(__file__).parent / "config.json"
+        try:
+            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _save_token(self) -> None:
+        token = self._token_var.get().strip()
+        self._save_config({"lichess_token": token})
+        # Clear cache so next refresh uses the new token
+        self._explorer_cache.clear()
+        self._explorer_fetch_pending = ""
+        if self._explorer_var.get():
+            self._refresh_explorer()
+
+    def _on_explorer_toggle(self) -> None:
+        if self._explorer_var.get():
+            self._explorer_frame.pack(side="top", fill="x", padx=4, pady=(0, 4))
+            self._refresh_explorer()
+        else:
+            self._explorer_frame.pack_forget()
+
+    def _refresh_explorer(self) -> None:
+        if not self._board_ui:
+            return
+        token = self._token_var.get().strip()
+        if not token:
+            self._explorer_status_var.set(
+                "Enter a Lichess API token above to use the Opening Explorer"
+            )
+            for row in self._explorer_tree.get_children():
+                self._explorer_tree.delete(row)
+            return
+        fen = self._board_ui.get_fen()
+        if fen in self._explorer_cache:
+            self._populate_explorer(self._explorer_cache[fen], fen)
+            return
+        if fen == self._explorer_fetch_pending:
+            return  # already fetching this position
+        self._explorer_fetch_pending = fen
+        self._explorer_status_var.set("Loading...")
+        for row in self._explorer_tree.get_children():
+            self._explorer_tree.delete(row)
+        threading.Thread(
+            target=self._fetch_explorer, args=(fen, token), daemon=True,
+        ).start()
+
+    def _fetch_explorer(self, fen: str, token: str) -> None:
+        url = "https://explorer.lichess.ovh/lichess?" + urllib.parse.urlencode({
+            "fen": fen,
+            "topGames": 0,
+            "recentGames": 0,
+            "variant": "standard",
+        })
+        headers = {"User-Agent": "ChessAnalyzerApp/1.0"}
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        try:
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = json.loads(resp.read().decode())
+            self._explorer_cache[fen] = data
+            self._root.after(0, lambda d=data, f=fen: self._populate_explorer(d, f))
+        except Exception:
+            self._root.after(0, lambda f=fen: self._on_explorer_fetch_error(f))
+
+    def _populate_explorer(self, data: dict, fen: str) -> None:
+        if not self._board_ui or self._board_ui.get_fen() != fen:
+            return
+        total_w = data.get("white", 0)
+        total_d = data.get("draws", 0)
+        total_b = data.get("black", 0)
+        total = total_w + total_d + total_b
+        if total > 0:
+            status = (
+                f"{total:,} games  "
+                f"White {100 * total_w // total}%  "
+                f"Draw {100 * total_d // total}%  "
+                f"Black {100 * total_b // total}%"
+            )
+        else:
+            status = "No games found"
+        self._explorer_status_var.set(status)
+        self._explorer_move_data = data.get("moves", [])[:15]
+        self._explorer_sort_col = "games"
+        self._explorer_sort_asc = False
+        self._render_explorer_rows()
+
+    def _sort_explorer(self, col: str) -> None:
+        if self._explorer_sort_col == col:
+            self._explorer_sort_asc = not self._explorer_sort_asc
+        else:
+            self._explorer_sort_col = col
+            self._explorer_sort_asc = col == "move"  # text cols default asc
+        self._render_explorer_rows()
+
+    def _render_explorer_rows(self) -> None:
+        col = self._explorer_sort_col
+        asc = self._explorer_sort_asc
+
+        def sort_key(m):
+            mw = m.get("white", 0)
+            md = m.get("draws", 0)
+            mb = m.get("black", 0)
+            mt = mw + md + mb or 1
+            if col == "move":
+                return m.get("san", "")
+            elif col == "games":
+                return mt
+            elif col == "white":
+                return mw / mt
+            elif col == "draw":
+                return md / mt
+            elif col == "black":
+                return mb / mt
+            elif col == "elo":
+                return m.get("averageRating", 0)
+            return 0
+
+        rows = sorted(self._explorer_move_data, key=sort_key, reverse=not asc)
+
+        # Update heading labels with sort indicator
+        for c, heading, _, _ in self._explorer_col_specs:
+            indicator = (" ▲" if asc else " ▼") if c == col else ""
+            self._explorer_tree.heading(
+                c, text=heading + indicator,
+                command=lambda cc=c: self._sort_explorer(cc),
+            )
+
+        for row in self._explorer_tree.get_children():
+            self._explorer_tree.delete(row)
+
+        uci_order = []
+        for m in rows:
+            mw = m.get("white", 0)
+            md = m.get("draws", 0)
+            mb = m.get("black", 0)
+            mt = mw + md + mb
+            w_pct = f"{100 * mw // mt}%" if mt else "-"
+            d_pct = f"{100 * md // mt}%" if mt else "-"
+            b_pct = f"{100 * mb // mt}%" if mt else "-"
+            elo = str(m.get("averageRating", "-"))
+            self._explorer_tree.insert("", "end", values=(
+                m.get("san", "?"),
+                f"{mt:,}",
+                w_pct, d_pct, b_pct,
+                elo,
+            ))
+            uci_order.append(m.get("uci", ""))
+        if self._board_ui:
+            self._board_ui.set_explorer_move_order(uci_order)
+
+    def _on_explorer_double_click(self, event) -> None:
+        item = self._explorer_tree.identify_row(event.y)
+        if not item or not self._board_ui:
+            return
+        san = self._explorer_tree.item(item, "values")[0]
+        try:
+            move = self._board_ui._board.parse_san(san)
+        except Exception:
+            return
+        self._board_ui._execute_move(move)
+
+    def _on_explorer_fetch_error(self, fen: str) -> None:
+        if self._board_ui and self._board_ui.get_fen() == fen:
+            if not self._token_var.get().strip():
+                self._explorer_status_var.set(
+                    "Enter a Lichess API token above to use the Opening Explorer"
+                )
+            else:
+                self._explorer_status_var.set(
+                    "Error fetching data — check your token or connection"
+                )
+            for row in self._explorer_tree.get_children():
+                self._explorer_tree.delete(row)
 
     def _on_close(self) -> None:
         if self._engine_worker:

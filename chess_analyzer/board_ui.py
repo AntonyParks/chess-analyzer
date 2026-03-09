@@ -114,6 +114,9 @@ class BoardUI:
         self._rank_map: dict = {}
         self._ply_rank_maps: dict = {}  # ply → rank_map for moves FROM that position
 
+        # Explorer move order (most-played human moves first, for engine sort)
+        self._explorer_move_order: list = []
+
         # Drag state
         self._drag_from: Optional[chess.Square] = None
         self._drag_press: tuple = (0, 0)   # original press coords (for click/drag detection)
@@ -257,6 +260,10 @@ class BoardUI:
         self._show_arrow = show
         self._draw_best_move_arrow()
 
+    def set_explorer_move_order(self, uci_list: list) -> None:
+        """Set the move order from the opening explorer (most-played first)."""
+        self._explorer_move_order = uci_list
+
     def get_fen(self) -> str:
         return self._board.fen()
 
@@ -367,6 +374,49 @@ class BoardUI:
         # Refresh history colors now that rank_map is populated
         if self._history_callback:
             self._history_callback()
+
+    def receive_partial_heatmap(self, result: EvalResult) -> None:
+        """Called after each individual move is evaluated; updates colors incrementally."""
+        if result.request_id != self._heatmap_request_id:
+            return
+
+        by_square: dict = {}
+        for uci, score in result.move_evals.items():
+            move = chess.Move.from_uci(uci)
+            val = score.white().score(mate_score=50000)
+            if val is None:
+                val = 0
+            by_square.setdefault(move.from_square, []).append((move, val / 100.0))
+
+        is_black = (self._board.turn == chess.BLACK)
+        all_vals_flat = [v for moves in by_square.values() for _, v in moves]
+        unique_sorted = sorted(set(all_vals_flat))
+        n_unique = len(unique_sorted)
+        val_to_t = {
+            v: (i / (n_unique - 1) if n_unique > 1 else 0.5)
+            for i, v in enumerate(unique_sorted)
+        }
+        if is_black:
+            val_to_t = {v: 1.0 - t for v, t in val_to_t.items()}
+
+        rank_map: dict = {}
+        for sq_key, moves in by_square.items():
+            for move, val in moves:
+                rank_map[move.uci()] = val_to_t[val]
+        self._rank_map = rank_map  # update so hover evals use current colors
+
+        if self._heatmap_mode:
+            heatmap_data = {
+                sq: sorted(moves, key=lambda x: x[1], reverse=not is_black)
+                for sq, moves in by_square.items()
+            }
+            self._canvas.delete("heatmap")
+            for sq, move_scores in heatmap_data.items():
+                self._draw_heatmap_for_square(sq, move_scores, rank_map)
+            self._canvas.tag_raise("eval")
+            self._canvas.tag_raise("select")
+            self._canvas.tag_raise("arrow")
+            self._canvas.tag_raise("pieces")
 
     # ── Navigation ────────────────────────────────────────────────────────────
 
@@ -851,6 +901,11 @@ class BoardUI:
         all_legal = list(self._board.legal_moves)
         if not all_legal:
             return
+        # Sort by explorer frequency: most-played human moves first
+        if self._explorer_move_order:
+            order = {uci: i for i, uci in enumerate(self._explorer_move_order)}
+            n = len(self._explorer_move_order)
+            all_legal.sort(key=lambda m: order.get(m.uci(), n))
         self._heatmap_request_id += 1
         request = EvalRequest(
             request_id=self._heatmap_request_id,
@@ -858,6 +913,7 @@ class BoardUI:
             moves=all_legal,
             callback=self.receive_heatmap_result,
             depth=self._worker._depth,
+            progress_callback=self.receive_partial_heatmap,
         )
         self._worker.submit_request(request)
 
