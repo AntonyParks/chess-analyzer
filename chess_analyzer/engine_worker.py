@@ -8,7 +8,7 @@ import queue
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, Optional
+from typing import Callable, Dict, List, Optional
 
 import chess
 import chess.engine
@@ -42,6 +42,12 @@ class EngineWorker:
         self._engine: Optional[chess.engine.SimpleEngine] = None
         self._lock = threading.Lock()
 
+        # Dedicated engine + serialisation lock for multi-PV analysis so it
+        # never shares the heatmap engine across threads.
+        self._multipv_engine: Optional[chess.engine.SimpleEngine] = None
+        self._multipv_lock = threading.Lock()   # one multipv analysis at a time
+        self._multipv_req_id: int = 0           # incremented on each new request
+
         self._thread = threading.Thread(target=self._worker_loop, daemon=True)
         self._thread.start()
 
@@ -62,15 +68,64 @@ class EngineWorker:
     def set_depth(self, depth: int) -> None:
         self._depth = depth
 
+    def submit_position_analysis(
+        self, board: chess.Board, depth: int, multipv: int, callback: Callable
+    ) -> None:
+        """Analyse the current position for the top N lines (multi-PV).
+        Uses a dedicated engine so it never races with the heatmap thread."""
+        with self._lock:
+            self._multipv_req_id += 1
+            req_id = self._multipv_req_id
+        threading.Thread(
+            target=self._run_multipv,
+            args=(board.copy(), depth, multipv, callback, req_id),
+            daemon=True,
+        ).start()
+
+    def _run_multipv(
+        self, board: chess.Board, depth: int, multipv: int, callback: Callable,
+        req_id: int,
+    ) -> None:
+        # Serialise access to the dedicated multipv engine; if we're already
+        # stale by the time we acquire the lock, bail out immediately.
+        with self._multipv_lock:
+            with self._lock:
+                if req_id != self._multipv_req_id:
+                    return  # superseded before we even started
+            if self._multipv_engine is None:
+                return
+            try:
+                infos = self._multipv_engine.analyse(
+                    board, chess.engine.Limit(depth=depth), multipv=multipv
+                )
+            except Exception:
+                return
+            # Check freshness again after the (potentially slow) analyse call
+            with self._lock:
+                if req_id != self._multipv_req_id:
+                    return  # a newer request arrived while we were analysing
+        if not isinstance(infos, list):
+            infos = [infos]
+        lines: List[dict] = []
+        for info in infos:
+            pv = info.get("pv", [])
+            score = info.get("score")
+            if pv:
+                san = board.san(pv[0])
+                cp = score.white().score(mate_score=30000) if score else None
+                lines.append({"san": san, "cp": cp, "pv_uci": [m.uci() for m in pv[:6]]})
+        self._root.after(0, lambda l=lines: callback(l))
+
     def shutdown(self) -> None:
-        """Graceful shutdown: stop worker thread then quit engine."""
+        """Graceful shutdown: stop worker thread then quit both engines."""
         self._queue.put(None)  # sentinel
         self._thread.join(timeout=6)
-        if self._engine:
-            try:
-                self._engine.quit()
-            except Exception:
-                pass
+        for eng in (self._engine, self._multipv_engine):
+            if eng:
+                try:
+                    eng.quit()
+                except Exception:
+                    pass
 
     # ------------------------------------------------------------------ #
     # Internal                                                             #
@@ -78,6 +133,7 @@ class EngineWorker:
 
     def _worker_loop(self) -> None:
         self._engine = chess.engine.SimpleEngine.popen_uci(str(self._path))
+        self._multipv_engine = chess.engine.SimpleEngine.popen_uci(str(self._path))
 
         while True:
             request = self._queue.get()
