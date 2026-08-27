@@ -11,6 +11,7 @@ A desktop chess analysis tool built with Python and tkinter. Hover over pieces t
 - **Position eval bar** — vertical bar showing who is winning
 - **Move history** — scrollable, color-coded move list; click any move to jump to that position
 - **Opening Explorer** — see what moves real players have made from the current position (requires free Lichess API token)
+- **Opening Insights** — searches the Lichess opening tree for moves that beat the position's average win rate; filter by color, rating and time control, sort the results, and click any row to replay the line on the board
 - **Incremental analysis** — board colors update move-by-move as Stockfish finishes each line
 - **Click or drag** to move pieces
 - **PGN import/export** and FEN load/copy
@@ -33,13 +34,20 @@ python chess_analyzer/main.py
 
 Stockfish will download automatically the first time you run the app (~60 MB, one-time).
 
-## Opening Explorer (optional)
+## Lichess data features (optional)
 
-The Opening Explorer shows move frequency data from millions of Lichess games. To enable it:
+Two features read move statistics from millions of Lichess games, and both use the same token:
 
 1. Create a free API token at [lichess.org/account/oauth/token](https://lichess.org/account/oauth/token) (no special permissions needed)
-2. Check **Opening Explorer** in the app
-3. Paste your token into the field and click **Save**
+2. Paste your token into the field in the app and click **Save**
+
+**Opening Explorer** — check the box to see how often each move has been played from the
+current position, and how it scored.
+
+**Opening Insights** — click **Opening Insights...** to walk the opening tree from the
+current position and surface moves whose win rate is well above the average for that
+position. Tune the delta threshold, minimum game count, and rating/time-control filters,
+then select a result to jump to it — the move is drawn on the board as a purple arrow.
 
 ## Dependencies
 
