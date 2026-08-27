@@ -44,6 +44,7 @@ TEXT_BEST  = "#FFD700"
 TEXT_OTHER = "#FFFFFF"
 
 SEL_BORDER      = "#F6F669"   # soft yellow (Lichess-style)
+NOTABLE_ARROW_COLOR = "#9B59B6"  # purple — secret weapon moves
 SEL_DOT         = "#F6F669"
 LAST_MOVE_COLOR = "#CDD16A"   # yellow-green (Lichess last-move)
 LAST_MOVE_TO_BORDER = "#F0E050"  # bright gold border on landing square
@@ -243,6 +244,7 @@ class BoardUI:
         self._canvas.delete("lastmove")
         self._canvas.delete("heatmap")
         self._canvas.delete("arrow")
+        self._canvas.delete("notable_arrow")
         self._draw_pieces()
         self._draw_eval_bar()
         self._request_heatmap()
@@ -306,6 +308,7 @@ class BoardUI:
         self._canvas.delete("eval")
         self._canvas.delete("select")
         self._canvas.delete("arrow")
+        self._canvas.delete("notable_arrow")
         self._draw_board()
         self._draw_labels()
         self._draw_last_move_highlight()
@@ -348,6 +351,7 @@ class BoardUI:
         self._canvas.delete("select")
         self._canvas.delete("arrow")
         self._canvas.delete("pv_arrow")
+        self._canvas.delete("notable_arrow")
         self._draw_board()
         self._draw_labels()
         self._draw_last_move_highlight()
@@ -551,6 +555,7 @@ class BoardUI:
         self._canvas.delete("heatmap")
         self._canvas.delete("arrow")
         self._canvas.delete("pv_arrow")
+        self._canvas.delete("notable_arrow")
         self._draw_last_move_highlight()
         self._draw_pieces()
         self._draw_eval_bar()
@@ -744,6 +749,7 @@ class BoardUI:
         self._canvas.delete("heatmap")
         self._canvas.delete("arrow")
         self._canvas.delete("pv_arrow")
+        self._canvas.delete("notable_arrow")
         self._draw_last_move_highlight()
         self._draw_pieces()
         self._draw_eval_bar()
@@ -1285,6 +1291,35 @@ class BoardUI:
         )
         self._canvas.tag_raise("arrow")
         self._canvas.tag_raise("pieces")
+
+    # ── Notable (secret weapon) move arrow ────────────────────────────────────
+
+    def show_notable_move(self, uci: Optional[str]) -> None:
+        """Draw a purple arrow for a notable move, or clear if uci is None."""
+        self._canvas.delete("notable_arrow")
+        if uci is None:
+            return
+        try:
+            move = chess.Move.from_uci(uci)
+        except Exception:
+            return
+        x1, y1 = self._sq_to_pixel(move.from_square)
+        x2, y2 = self._sq_to_pixel(move.to_square)
+        cx1 = x1 + self._sq // 2
+        cy1 = y1 + self._sq // 2
+        cx2 = x2 + self._sq // 2
+        cy2 = y2 + self._sq // 2
+        self._canvas.create_line(
+            cx1, cy1, cx2, cy2,
+            arrow=tk.LAST, arrowshape=(18, 22, 9),
+            width=7, fill=NOTABLE_ARROW_COLOR, tags="notable_arrow",
+        )
+        self._canvas.tag_raise("notable_arrow")
+        self._canvas.tag_raise("pieces")
+
+    def clear_notable_move(self) -> None:
+        """Remove the notable move arrow."""
+        self._canvas.delete("notable_arrow")
 
     # ── Eval overlay ──────────────────────────────────────────────────────────
 

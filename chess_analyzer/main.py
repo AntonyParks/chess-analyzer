@@ -7,6 +7,7 @@ import json
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 from pathlib import Path
+from typing import Optional
 import threading
 import urllib.parse
 import urllib.request
@@ -23,6 +24,14 @@ from stockfish_setup import StockfishSetup
 from pieces_setup import PiecesSetup
 from engine_worker import EngineWorker
 from board_ui import BoardUI, _score_to_color
+from player_analysis import OpeningAnalysisWorker, NotableMove
+
+# ── Opening explorer filter constants (shared by explorer + player analysis) ──
+_SPEEDS        = ["ultraBullet", "bullet", "blitz", "rapid", "classical", "correspondence"]
+_SPEED_LABELS  = ["Ultra", "Bullet", "Blitz", "Rapid", "Classical", "Corr."]
+_RATINGS       = [1600, 1800, 2000, 2200, 2500]
+_DEFAULT_SPEEDS  = {"bullet", "blitz", "rapid"}
+_DEFAULT_RATINGS = {1600, 1800, 2000, 2200}
 
 
 class ChessAnalyzerApp:
@@ -88,6 +97,12 @@ class ChessAnalyzerApp:
         # Game review state
         self._game_review_entries: list = []
 
+        # Opening analysis state
+        self._opening_analysis_worker: Optional[OpeningAnalysisWorker] = None
+        self._analysis_results: list = []
+        self._notable_arrow_fen: Optional[str] = None
+        self._notable_arrow_uci: Optional[str] = None
+
         self._setup_stockfish_then_launch()
 
     def _setup_stockfish_then_launch(self) -> None:
@@ -139,6 +154,10 @@ class ChessAnalyzerApp:
             root_widget=self._root,
             depth=self._depth_var.get(),
         )
+
+        # Pack fixed-height bottom frames BEFORE top_frame so they get space
+        self._status_frame = tk.Frame(self._root, bg="#252525", pady=3)
+        self._status_frame.pack(side="bottom", fill="x", padx=4)
 
         # ── Main layout: [controls] left | [board] center | [history] right ────
         top_frame = tk.Frame(self._root, bg="#2B2B2B")
@@ -223,9 +242,7 @@ class ChessAnalyzerApp:
         self._graph_canvas.bind("<Button-1>", self._on_graph_click)
         self._graph_canvas.bind("<Configure>", lambda e: self._draw_eval_graph())
 
-        # ── Status bar (below board+history, above controls) ──────────────────
-        self._status_frame = tk.Frame(self._root, bg="#252525", pady=3)
-        self._status_frame.pack(side="top", fill="x", padx=4)
+        # ── Status bar content (frame already created and packed above) ─────────
         self._turn_var = tk.StringVar(value="White to move")
         self._state_var = tk.StringVar(value="")
         self._move_var = tk.StringVar(value="")
@@ -263,12 +280,6 @@ class ChessAnalyzerApp:
         ).pack(anchor="w", pady=(0, 6))
 
         # ── Filters ──────────────────────────────────────────────────────────
-        _SPEEDS  = ["ultraBullet", "bullet", "blitz", "rapid", "classical", "correspondence"]
-        _RATINGS = [1600, 1800, 2000, 2200, 2500]
-        _SPEED_LABELS  = ["Ultra", "Bullet", "Blitz", "Rapid", "Classical", "Corr."]
-        _DEFAULT_SPEEDS  = {"bullet", "blitz", "rapid"}
-        _DEFAULT_RATINGS = {1600, 1800, 2000, 2200}
-
         self._explorer_speed_vars:  dict = {}
         self._explorer_rating_vars: dict = {}
 
@@ -472,6 +483,13 @@ class ChessAnalyzerApp:
         if not self._analyzing_game:
             self._derive_engine_lines()
 
+        # Notable move arrow: show when board is at the flagged position
+        if self._board_ui and self._notable_arrow_fen is not None:
+            if self._board_ui.get_fen() == self._notable_arrow_fen:
+                self._board_ui.show_notable_move(self._notable_arrow_uci)
+            else:
+                self._board_ui.clear_notable_move()
+
     # ── Control panels ────────────────────────────────────────────────────────
 
     def _build_load_panel(self, parent: tk.Frame) -> None:
@@ -552,6 +570,13 @@ class ChessAnalyzerApp:
             frame, text="Opening Explorer",
             variable=self._explorer_var,
             command=self._on_explorer_toggle,
+        ).pack(anchor="w", pady=1)
+
+        ttk.Separator(frame, orient="horizontal").pack(fill="x", pady=4)
+
+        ttk.Button(
+            frame, text="Opening Insights...",
+            command=self._open_insights_window,
         ).pack(anchor="w", pady=1)
 
     # ── Button handlers ───────────────────────────────────────────────────────
@@ -996,6 +1021,8 @@ class ChessAnalyzerApp:
             avail_h = self._root.winfo_height() - status_h - graph_h - 24
             new_sq = max(50, min(130, avail_h // 8))
             self._board_ui.resize(new_sq)
+            if self._notable_arrow_fen and self._board_ui.get_fen() == self._notable_arrow_fen:
+                self._board_ui.show_notable_move(self._notable_arrow_uci)
             self._draw_eval_graph()
         except Exception:
             pass
@@ -1200,6 +1227,351 @@ class ChessAnalyzerApp:
                 explanation = ""
         if hasattr(self, "_pv_explain_var"):
             self._pv_explain_var.set(explanation)
+
+    # ── Opening Insights popup ────────────────────────────────────────────────
+
+    def _open_insights_window(self) -> None:
+        if hasattr(self, "_insights_win") and self._insights_win.winfo_exists():
+            self._insights_win.lift()
+            self._insights_win.focus()
+            return
+        win = tk.Toplevel(self._root)
+        win.title("Opening Insights")
+        win.geometry("900x260")
+        win.resizable(True, True)
+        win.configure(bg="#2B2B2B")
+        win.protocol("WM_DELETE_WINDOW", self._on_insights_close)
+        self._insights_win = win
+        self._build_opening_analysis_panel(win)
+
+    def _on_insights_close(self) -> None:
+        if self._opening_analysis_worker:
+            self._opening_analysis_worker.stop()
+        self._insights_win.destroy()
+
+    # ── Opening Analysis panel (content) ──────────────────────────────────────
+
+    def _build_opening_analysis_panel(self, parent: tk.Frame) -> None:
+        """Full-width bar: controls on left, results treeview on right."""
+        # Left: compact controls
+        left_frame = tk.Frame(parent, bg="#3C3F41", padx=6, pady=4)
+        left_frame.pack(side="left", fill="y")
+
+        ttk.Label(left_frame, text="Opening Insights",
+                  font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 4))
+
+        row1 = ttk.Frame(left_frame)
+        row1.pack(anchor="w", pady=(0, 2))
+        ttk.Label(row1, text="Color:").pack(side="left")
+        self._oa_color_var = tk.StringVar(value="white")
+        ttk.Radiobutton(row1, text="White", variable=self._oa_color_var,
+                        value="white").pack(side="left", padx=(2, 4))
+        ttk.Radiobutton(row1, text="Black", variable=self._oa_color_var,
+                        value="black").pack(side="left", padx=(0, 8))
+        ttk.Label(row1, text="Min%:").pack(side="left")
+        self._oa_minpct_var = tk.IntVar(value=5)
+        ttk.Spinbox(row1, from_=1, to=50, textvariable=self._oa_minpct_var,
+                    width=4).pack(side="left", padx=(2, 8))
+        ttk.Label(row1, text="Min games:").pack(side="left")
+        self._oa_mingames_var = tk.IntVar(value=100)
+        ttk.Spinbox(row1, from_=0, to=100000, increment=100,
+                    textvariable=self._oa_mingames_var,
+                    width=6).pack(side="left", padx=(2, 8))
+        ttk.Label(row1, text="Delta%:").pack(side="left")
+        self._oa_delta_var = tk.IntVar(value=10)
+        ttk.Spinbox(row1, from_=1, to=50, textvariable=self._oa_delta_var,
+                    width=4).pack(side="left", padx=(2, 8))
+        ttk.Label(row1, text="Top N:").pack(side="left")
+        self._oa_topn_var = tk.IntVar(value=0)
+        ttk.Spinbox(row1, from_=0, to=10, textvariable=self._oa_topn_var,
+                    width=3).pack(side="left", padx=2)
+
+        row2 = ttk.Frame(left_frame)
+        row2.pack(anchor="w", pady=(0, 2))
+        ttk.Label(row2, text="Speed:", width=6).pack(side="left")
+        self._oa_speed_vars: dict = {}
+        for speed, label in zip(_SPEEDS, _SPEED_LABELS):
+            var = tk.BooleanVar(value=speed in _DEFAULT_SPEEDS)
+            self._oa_speed_vars[speed] = var
+            ttk.Checkbutton(row2, text=label, variable=var).pack(side="left", padx=(0, 2))
+
+        row_r = ttk.Frame(left_frame)
+        row_r.pack(anchor="w", pady=(0, 2))
+        ttk.Label(row_r, text="Rating:", width=6).pack(side="left")
+        self._oa_rating_vars: dict = {}
+        for r in _RATINGS:
+            var = tk.BooleanVar(value=r in _DEFAULT_RATINGS)
+            self._oa_rating_vars[r] = var
+            ttk.Checkbutton(row_r, text=str(r), variable=var).pack(side="left", padx=(0, 2))
+
+        row3 = ttk.Frame(left_frame)
+        row3.pack(anchor="w", pady=(2, 2))
+        self._oa_run_btn = ttk.Button(row3, text="Analyze from Here",
+                                      command=self._on_oa_start)
+        self._oa_run_btn.pack(side="left")
+        self._oa_stop_btn = ttk.Button(row3, text="Stop",
+                                       command=self._on_oa_stop, state="disabled")
+        self._oa_stop_btn.pack(side="left", padx=4)
+
+        self._oa_status_var = tk.StringVar(value="")
+        ttk.Label(left_frame, textvariable=self._oa_status_var,
+                  wraplength=270, justify="left").pack(anchor="w", fill="x")
+
+        # Explainer text
+        _EXPLAINER = (
+            "Win%  — win rate of this specific move\n"
+            "Avg WR%  — weighted avg win rate across all moves at that position\n"
+            "Delta  — Win% minus Avg WR% (how much this move outperforms)\n"
+            "Popularity  — rank by game count  (#1 = most played)\n"
+            "Top N  — limit opponent's responses to their N most popular moves (0 = all)"
+        )
+        ttk.Label(
+            left_frame, text=_EXPLAINER,
+            font=("Segoe UI", 8), justify="left", wraplength=270,
+            foreground="#999999",
+        ).pack(anchor="w", pady=(6, 0), fill="x")
+
+        # Right: results treeview
+        right_frame = tk.Frame(parent, bg="#2B2B2B")
+        right_frame.pack(side="left", fill="both", expand=True, padx=(4, 0))
+
+        self._oa_col_specs = [
+            ("sequence",   "Position",   130, "w"),
+            ("move",       "Move",        55, "w"),
+            ("move_wr",    "Win%",        65, "center"),
+            ("avg_wr",     "Avg WR%",     65, "center"),
+            ("delta",      "Delta",       60, "center"),
+            ("popularity", "Popularity",  80, "center"),
+        ]
+        self._oa_sort_col: str = "delta"
+        self._oa_sort_asc: bool = False
+
+        oa_cols = tuple(c for c, *_ in self._oa_col_specs)
+        self._oa_tree = ttk.Treeview(
+            right_frame, columns=oa_cols, show="headings", height=4,
+            style="Explorer.Treeview",
+        )
+        for col, heading, width, anchor_val in self._oa_col_specs:
+            self._oa_tree.column(col, width=width, anchor=anchor_val, stretch=False)
+        self._oa_update_headings()
+        oa_scroll = ttk.Scrollbar(right_frame, orient="vertical", command=self._oa_tree.yview)
+        self._oa_tree.configure(yscrollcommand=oa_scroll.set)
+        self._oa_tree.bind("<<TreeviewSelect>>", self._on_oa_row_select)
+        self._oa_tree.pack(side="left", fill="both", expand=True)
+        oa_scroll.pack(side="left", fill="y")
+
+        self._oa_detail_var = tk.StringVar(value="")
+        tk.Label(
+            right_frame, textvariable=self._oa_detail_var,
+            bg="#2B2B2B", fg="#CCCCCC", font=("Segoe UI", 10),
+            anchor="w", justify="left", wraplength=600, pady=4,
+        ).pack(side="top", fill="x", padx=4)
+
+    def _on_oa_start(self) -> None:
+        if not self._board_ui:
+            return
+        speeds = [s for s, v in self._oa_speed_vars.items() if v.get()]
+        ratings = [r for r, v in self._oa_rating_vars.items() if v.get()]
+        if not speeds:
+            messagebox.showwarning("No Speeds", "Select at least one time control.")
+            return
+
+        for row in self._oa_tree.get_children():
+            self._oa_tree.delete(row)
+        self._analysis_results = []
+        self._oa_sort_col = "delta"
+        self._oa_sort_asc = False
+        self._oa_update_headings()
+        self._notable_arrow_fen = None
+        self._notable_arrow_uci = None
+        self._board_ui.clear_notable_move()
+
+        if hasattr(self, "_oa_detail_var"):
+            self._oa_detail_var.set("")
+        self._oa_run_btn.configure(state="disabled")
+        self._oa_stop_btn.configure(state="normal")
+        self._oa_status_var.set("Starting analysis...")
+
+        token = self._token_var.get().strip() if hasattr(self, "_token_var") else ""
+        self._opening_analysis_worker = OpeningAnalysisWorker()
+        self._opening_analysis_worker.start(
+            color=self._oa_color_var.get(),
+            min_pct=self._oa_minpct_var.get(),
+            min_games=self._oa_mingames_var.get(),
+            top_n=self._oa_topn_var.get(),
+            speed_filters=speeds,
+            rating_filters=ratings,
+            delta_threshold=float(self._oa_delta_var.get()),
+            start_fen=self._board_ui.get_fen(),
+            token=token,
+            on_progress=self._on_oa_progress,
+            on_result=self._on_oa_result,
+            on_complete=self._on_oa_complete,
+            root=self._root,
+        )
+
+    def _on_oa_stop(self) -> None:
+        if self._opening_analysis_worker:
+            self._opening_analysis_worker.stop()
+        self._oa_run_btn.configure(state="normal")
+        self._oa_stop_btn.configure(state="disabled")
+        self._oa_status_var.set("Stopped.")
+
+    def _on_oa_progress(self, msg: str) -> None:
+        self._oa_status_var.set(msg)
+
+    def _on_oa_result(self, nm: NotableMove) -> None:
+        self._analysis_results.append(nm)
+        self._render_oa_rows()
+
+    @staticmethod
+    def _oa_seq_str(nm: NotableMove) -> str:
+        board = chess.Board()
+        san_seq = []
+        for uci in nm.move_uci_sequence:
+            try:
+                move = chess.Move.from_uci(uci)
+                san_seq.append(board.san(move))
+                board.push(move)
+            except Exception:
+                san_seq.append(uci)
+        if len(san_seq) > 4:
+            return "..." + " ".join(san_seq[-4:])
+        return " ".join(san_seq) if san_seq else "Start"
+
+    def _oa_explain(self, nm: NotableMove) -> str:
+        color_label = "White" if self._oa_color_var.get() == "white" else "Black"
+        board = chess.Board()
+        san_seq = []
+        for uci in nm.move_uci_sequence:
+            try:
+                move = chess.Move.from_uci(uci)
+                san_seq.append(board.san(move))
+                board.push(move)
+            except Exception:
+                break
+        pos_str = f"after {' '.join(san_seq)}" if san_seq else "from the starting position"
+
+        if nm.popularity_rank == 1:
+            surprise = " It is also the most-played move here."
+        elif nm.popularity_rank == 2:
+            surprise = f" It is the 2nd most popular move, yet outperforms the field by {nm.delta:.1f} pp."
+        else:
+            surprise = (
+                f" Despite being only the #{nm.popularity_rank} most popular move, "
+                f"it outperforms the field by {nm.delta:.1f} pp."
+            )
+
+        return (
+            f"{pos_str.capitalize()}, {nm.san} scores {nm.move_wr:.1f}% for {color_label} — "
+            f"{nm.delta:.1f} percentage points above the position average of "
+            f"{nm.pos_avg_wr:.1f}%.{surprise}"
+        )
+
+    def _sort_oa(self, col: str) -> None:
+        if self._oa_sort_col == col:
+            self._oa_sort_asc = not self._oa_sort_asc
+        else:
+            self._oa_sort_col = col
+            self._oa_sort_asc = col in ("sequence", "move", "popularity")
+        self._render_oa_rows()
+
+    def _oa_update_headings(self) -> None:
+        for col, heading, _, _ in self._oa_col_specs:
+            indicator = (" ▲" if self._oa_sort_asc else " ▼") if col == self._oa_sort_col else ""
+            self._oa_tree.heading(
+                col, text=heading + indicator,
+                command=lambda c=col: self._sort_oa(c),
+            )
+
+    def _render_oa_rows(self) -> None:
+        col = self._oa_sort_col
+        asc = self._oa_sort_asc
+
+        def sort_key(nm: NotableMove):
+            if col == "sequence":
+                return len(nm.move_uci_sequence)
+            if col == "move":
+                return nm.san
+            if col == "move_wr":
+                return nm.move_wr
+            if col == "avg_wr":
+                return nm.pos_avg_wr
+            if col == "delta":
+                return nm.delta
+            if col == "popularity":
+                return nm.popularity_rank
+            return 0
+
+        sorted_results = sorted(self._analysis_results, key=sort_key, reverse=not asc)
+        self._oa_update_headings()
+
+        # Preserve selection by iid (index into _analysis_results)
+        sel = self._oa_tree.selection()
+
+        for row in self._oa_tree.get_children():
+            self._oa_tree.delete(row)
+
+        for nm in sorted_results:
+            idx = self._analysis_results.index(nm)
+            self._oa_tree.insert("", "end", iid=str(idx), values=(
+                self._oa_seq_str(nm),
+                nm.san,
+                f"{nm.move_wr:.1f}%",
+                f"{nm.pos_avg_wr:.1f}%",
+                f"+{nm.delta:.1f}",
+                f"#{nm.popularity_rank}",
+            ))
+
+        # Restore selection if still present
+        for iid in sel:
+            if self._oa_tree.exists(iid):
+                self._oa_tree.selection_set(iid)
+
+    def _on_oa_complete(self, total: int) -> None:
+        self._oa_run_btn.configure(state="normal")
+        self._oa_stop_btn.configure(state="disabled")
+        found = len(self._analysis_results)
+        self._oa_status_var.set(
+            f"Done. {total} positions checked, "
+            f"{found} notable move{'s' if found != 1 else ''} found."
+        )
+
+    def _on_oa_row_select(self, event) -> None:
+        if not self._board_ui:
+            return
+        sel = self._oa_tree.selection()
+        if not sel:
+            if hasattr(self, "_oa_detail_var"):
+                self._oa_detail_var.set("")
+            return
+        try:
+            idx = int(sel[0])
+        except (ValueError, IndexError):
+            return
+        if idx >= len(self._analysis_results):
+            return
+        nm = self._analysis_results[idx]
+        if hasattr(self, "_oa_detail_var"):
+            self._oa_detail_var.set(self._oa_explain(nm))
+        self._navigate_to_notable_move(nm)
+
+    def _navigate_to_notable_move(self, nm: NotableMove) -> None:
+        """Replay the move sequence as a game, then show the notable arrow."""
+        board = chess.Board()
+        moves = []
+        for uci in nm.move_uci_sequence:
+            try:
+                move = chess.Move.from_uci(uci)
+                board.push(move)
+                moves.append(move)
+            except Exception:
+                break
+        # Set arrow context BEFORE load_game so the history_callback fires with it set
+        self._notable_arrow_fen = chess.Board(nm.fen).fen()
+        self._notable_arrow_uci = nm.uci
+        self._board_ui.load_game(chess.Board(), moves)
+        # _goto_ply → _history_callback → _update_history_display → show_notable_move
 
     # ── Game analysis (full game eval graph) ─────────────────────────────────
 
