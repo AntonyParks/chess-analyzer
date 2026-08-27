@@ -4,6 +4,10 @@ A desktop chess analysis tool built with Python and tkinter. Hover over pieces t
 
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 
+![Chess Analyzer](docs/screenshot.png)
+
+*Hovering the d5 knight: Stockfish scores every legal move (+5.8 on e3, +5.0 on f6), the heatmap bands each piece best-to-worst, and the gold arrow marks the engine's top choice.*
+
 ## Features
 
 - **Hover evaluation** — hover over any piece to see Stockfish's score for every legal move
@@ -52,4 +56,5 @@ then select a result to jump to it — the move is drawn on the board as a purpl
 ## Dependencies
 
 - [`chess`](https://python-chess.readthedocs.io/) — board logic, move generation, PGN parsing
+- [`pillow`](https://pillow.readthedocs.io/) — *optional*; used for smooth piece-image scaling. The app falls back to unscaled images if it is not installed.
 - Stockfish 17 — downloaded automatically to `chess_analyzer/engines/`
