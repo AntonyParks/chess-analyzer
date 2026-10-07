@@ -179,7 +179,10 @@ class MainWindow(QMainWindow):
         )
         self._explorer.settingsRequested.connect(self._open_settings)
         self._insights = InsightsPanel(
-            cfg=self._cfg, board=self._board, worker=self._insights_worker
+            cfg=self._cfg,
+            board=self._board,
+            worker=self._insights_worker,
+            depth_provider=lambda: self._depth_spin.value(),
         )
         self._insights.settingsRequested.connect(self._open_settings)
         self._review = ReviewPanel()
@@ -396,6 +399,7 @@ class MainWindow(QMainWindow):
         self._engine_label.setToolTip(str(exe))
         self.act_analyze.setEnabled(True)
         self._board.set_worker(self._worker)
+        self._insights.set_engine(self._worker)
 
     def _on_engine_failed(self, error: Exception) -> None:
         self._setup_label.setText("No engine")

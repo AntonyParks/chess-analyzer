@@ -107,9 +107,12 @@ size of both samples, so neither a lucky record over a few games nor a baseline 
 handful of stray games deep in the tree qualifies, but well-supported moves do. **Edge** is
 that confidence-adjusted gap. **Played** shows how often each
 listed move is actually chosen from its position (its share of the games played there), so an
-obscure sideline is easy to skip or sort to the bottom. **Min games** sets the minimum sample,
-**Min %** and **Top N** limit how deep and wide the search goes. Select a row to replay the line
-on the board; the move is drawn as a purple arrow.
+obscure sideline is easy to skip or sort to the bottom. **Eval** is Stockfish's verdict on the
+position after each listed move (White's point of view, coloured for your colour), filled in
+whenever the engine is otherwise idle — it tells a move that merely beats weak alternatives
+from one that is objectively good. **Min games** sets the minimum sample, **Min %** and
+**Top N** limit how deep and wide the search goes. Select a row to replay the line on the
+board; the move is drawn as a purple arrow.
 
 ## Keyboard and mouse
 

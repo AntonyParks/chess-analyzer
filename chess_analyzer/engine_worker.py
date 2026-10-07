@@ -29,11 +29,21 @@ log = logging.getLogger(__name__)
 
 
 class Kind(IntEnum):
-    """Request kinds; a lower value preempts a higher one."""
+    """Request kinds; a lower value preempts a higher one.
+
+    HOVER and HEATMAP are single slots (a new request replaces the pending one). BATCH
+    (Analyze Game) and IDLE (background work such as the Insights evaluations) are queues
+    served in order; IDLE only runs while nothing else is waiting.
+    """
 
     HOVER = 0
     HEATMAP = 1
     BATCH = 2
+    IDLE = 3
+
+
+SLOT_KINDS = (Kind.HOVER, Kind.HEATMAP)
+QUEUE_KINDS = (Kind.BATCH, Kind.IDLE)  # in priority order
 
 
 @dataclass(frozen=True)
@@ -112,8 +122,8 @@ class EngineWorker:
         self._cache_size = cache_size
 
         self._cond = threading.Condition()
-        self._slots: dict[Kind, _Pending | None] = {Kind.HOVER: None, Kind.HEATMAP: None}
-        self._batch: deque[_Pending] = deque()
+        self._slots: dict[Kind, _Pending | None] = dict.fromkeys(SLOT_KINDS)
+        self._queues: dict[Kind, deque[_Pending]] = {k: deque() for k in QUEUE_KINDS}
         self._cancelled: set[int] = set()
         self._current: _Pending | None = None
         self._current_analysis: Any = None
@@ -135,27 +145,27 @@ class EngineWorker:
         """Queue a request and return its id.
 
         HOVER and HEATMAP requests replace any pending request of the same kind (and cancel
-        one in flight); BATCH requests queue in order.
+        one in flight); BATCH and IDLE requests queue in order. A request interrupts a
+        running one of lower priority, which resumes once the newcomer is done.
         """
         with self._cond:
             rid = self._next_id
             self._next_id += 1
             pending = _Pending(rid, request)
-            if request.kind is Kind.BATCH:
-                self._batch.append(pending)
+            current = self._current
+            if request.kind in self._queues:
+                self._queues[request.kind].append(pending)
             else:
                 old = self._slots[request.kind]
                 if old is not None:
                     self._cancelled.add(old.id)
                 self._slots[request.kind] = pending
-                current = self._current
-                if current is not None:
-                    if current.request.kind == request.kind:
-                        self._cancelled.add(current.id)
-                        self._interrupt_locked()
-                    elif current.request.kind > request.kind:
-                        current.interrupted = True
-                        self._interrupt_locked()
+                if current is not None and current.request.kind == request.kind:
+                    self._cancelled.add(current.id)
+                    self._interrupt_locked()
+            if current is not None and current.request.kind > request.kind:
+                current.interrupted = True
+                self._interrupt_locked()
             self._cond.notify_all()
         return rid
 
@@ -165,10 +175,11 @@ class EngineWorker:
                 if pending is not None and pending.id == request_id:
                     self._slots[kind] = None
                     return
-            for pending in list(self._batch):
-                if pending.id == request_id:
-                    self._batch.remove(pending)
-                    return
+            for queue in self._queues.values():
+                for pending in queue:
+                    if pending.id == request_id:
+                        queue.remove(pending)
+                        return
             if self._current is not None and self._current.id == request_id:
                 self._cancelled.add(request_id)
                 self._interrupt_locked()
@@ -176,8 +187,8 @@ class EngineWorker:
     def cancel_kind(self, kind: Kind) -> None:
         """Drop every pending request of a kind and abort one in flight."""
         with self._cond:
-            if kind is Kind.BATCH:
-                self._batch.clear()
+            if kind in self._queues:
+                self._queues[kind].clear()
             else:
                 self._slots[kind] = None
             if self._current is not None and self._current.request.kind == kind:
@@ -226,15 +237,16 @@ class EngineWorker:
     def _take_next(self) -> _Pending | None:
         with self._cond:
             while not self._stop.is_set():
-                for kind in (Kind.HOVER, Kind.HEATMAP):
+                for kind in SLOT_KINDS:
                     pending = self._slots[kind]
                     if pending is not None:
                         self._slots[kind] = None
                         self._current = pending
                         return pending
-                if self._batch:
-                    self._current = self._batch.popleft()
-                    return self._current
+                for kind in QUEUE_KINDS:
+                    if self._queues[kind]:
+                        self._current = self._queues[kind].popleft()
+                        return self._current
                 self._cond.wait()
             return None
 
@@ -331,7 +343,9 @@ class EngineWorker:
                 log.debug("analysis.stop() failed", exc_info=True)
 
     def _higher_priority_waiting_locked(self, kind: Kind) -> bool:
-        return any(self._slots[k] is not None for k in self._slots if k < kind)
+        return any(self._slots[k] is not None for k in SLOT_KINDS if k < kind) or any(
+            self._queues[k] for k in QUEUE_KINDS if k < kind
+        )
 
     def _should_abort(self, pending: _Pending) -> bool:
         if self._stop.is_set():
@@ -356,8 +370,8 @@ class EngineWorker:
         with self._cond:
             pending.interrupted = False
             kind = pending.request.kind
-            if kind is Kind.BATCH:
-                self._batch.appendleft(pending)
+            if kind in self._queues:
+                self._queues[kind].appendleft(pending)
             elif self._slots[kind] is None:
                 self._slots[kind] = pending
             # else: a newer request of this kind has replaced it

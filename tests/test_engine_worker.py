@@ -162,6 +162,41 @@ def test_batch_runs_in_order_and_cancel_kind_drops_the_rest(harness):
     assert [r.tag for r in done] == [0, 1, 2]
 
 
+def test_idle_requests_yield_to_batch_and_survive_its_cancellation(harness):
+    hold = threading.Event()
+    fake = FakeEngine(hold=hold)
+    harness.engines = [fake]
+    done = []
+    board = chess.Board()
+    move = chess.Move.from_uci
+
+    harness.worker.submit(
+        harness.request(Kind.IDLE, board, [move("e2e4")], tag="idle", on_done=done.append)
+    )
+    assert fake.started.wait(timeout=5)  # the idle search is under way (and held)
+    harness.worker.submit(
+        harness.request(Kind.BATCH, board, [move("d2d4")], tag="batch", on_done=done.append)
+    )
+    hold.set()
+    assert harness.wait_for(lambda: len(done) == 2)
+    assert [r.tag for r in done] == ["batch", "idle"]  # the batch cut in; the idle one resumed
+
+    done.clear()
+    fake.started.clear()
+    fake.hold = threading.Event()
+    harness.worker.submit(
+        harness.request(Kind.IDLE, board, [move("g1f3")], tag="idle2", on_done=done.append)
+    )
+    assert fake.started.wait(timeout=5)
+    harness.worker.submit(
+        harness.request(Kind.BATCH, board, [move("b1c3")], tag="batch2", on_done=done.append)
+    )
+    harness.worker.cancel_kind(Kind.BATCH)  # Analyze Game cancelled: idle work is unaffected
+    fake.hold.set()
+    assert harness.wait_for(lambda: len(done) == 1)
+    assert done[0].tag == "idle2" and done[0].complete
+
+
 def test_cache_hits_skip_the_engine_and_depth_is_part_of_the_key(harness):
     fake = FakeEngine()
     harness.engines = [fake]

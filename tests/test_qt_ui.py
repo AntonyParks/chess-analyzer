@@ -271,7 +271,7 @@ def test_insights_played_column_shows_how_rare_a_move_is(window):
         Qt.ItemDataRole.UserRole,
         Qt.ItemDataRole.ToolTipRole,
     )
-    assert COLUMNS[PLAYED_COL] == "Played" and COLUMNS[PLAYED_COL - 1] == "Move"
+    assert COLUMNS[PLAYED_COL] == "Played" and COLUMNS[PLAYED_COL - 1] == "Eval"
     assert model.data(model.index(0, PLAYED_COL), display) == "57.1%"
     assert model.data(model.index(1, PLAYED_COL), display) == "<0.1%"
     assert model.data(model.index(0, PLAYED_COL), user) == pytest.approx(400 / 7)
@@ -279,7 +279,45 @@ def test_insights_played_column_shows_how_rare_a_move_is(window):
     assert model.data(model.index(1, EDGE_COL), display) == "+9.0"  # later columns intact
     panel = window._insights
     assert panel._view.horizontalHeader().sortIndicatorSection() == EDGE_COL  # still by Edge
-    assert "played in 400 of the 700 games here (57.1%)" in panel._explain(model.at(0))
+    assert "played in 400 of the 700 games here (57.1%)" in panel._explain(model.at(0), None)
+
+
+def test_insights_eval_column_is_filled_by_the_engine_in_the_background(window):
+    from chess_analyzer.opening_insights import NotableMove
+    from chess_analyzer.ui.insights_panel import EVAL_COL
+
+    assert wait_until(lambda: window._worker is not None)
+    panel = window._insights
+    assert panel._engine is window._worker
+    nm = NotableMove(
+        root_fen=chess.STARTING_FEN,
+        prefix_moves=(),
+        line=(),
+        move=chess.Move.from_uci("e2e4"),
+        san="e4",
+        games=400,
+        position_games=700,
+        score_pct=55.0,
+        lower_pct=52.0,
+        baseline_pct=50.0,
+        edge_pp=2.0,
+        popularity_rank=1,
+    )
+    panel._run_id = 7
+    panel._model.clear(chess.WHITE)
+    panel._on_result(7, nm)  # a result arriving from the crawl
+    model = panel._model
+    display = Qt.ItemDataRole.DisplayRole
+    assert wait_until(lambda: model.data(model.index(0, EVAL_COL), display) != "")
+    # FakeEngine: after e4 it reports +42 for the side to move (Black), i.e. -0.4 for White.
+    assert model.data(model.index(0, EVAL_COL), display) == "-0.4"
+    assert model.data(model.index(0, EVAL_COL), Qt.ItemDataRole.UserRole) == -42
+    assert model.data(model.index(0, EVAL_COL), Qt.ItemDataRole.ForegroundRole) is not None
+    assert "depth" in model.data(model.index(0, EVAL_COL), Qt.ItemDataRole.ToolTipRole)
+    assert "Stockfish (depth" in panel._explain(nm, model.eval_at(0))
+    assert panel._eval_ids == set()
+    panel._on_result(8, nm)  # a stale run's result is ignored and not evaluated
+    assert len(model) == 1
 
 
 def test_explorer_panel_fills_evals_from_the_boards_analysis(window):

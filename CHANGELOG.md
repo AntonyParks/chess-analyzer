@@ -19,6 +19,9 @@ The user interface is rebuilt in Qt (PySide6); everything below the UI is unchan
 - The Insights table shows how often each listed move is played from its position (a
   **Played** column with the share of games — sortable, raw counts in the tooltip), so rare
   sidelines are easy to skip.
+- The Insights table has an **Eval** column: Stockfish's evaluation of the position after
+  each listed move, computed in the background at the lowest priority (behind hovering, the
+  heatmap and Analyze Game — a new `IDLE` request kind in the engine scheduler).
 - Insights and Review are tabs instead of pop-up windows; the promotion chooser is drawn on
   the board; coordinates are drawn inside the squares; arrows are translucent and antialiased.
 - Window geometry, state and the recent-files list are remembered.

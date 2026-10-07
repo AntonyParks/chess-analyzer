@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 import chess
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, QSortFilterProxyModel, Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -23,7 +25,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import config
+from .. import config, evaluation, theme
+from ..engine_worker import EngineWorker, EvalRequest, EvalResult, Kind
 from ..lichess_api import RATING_CHOICES, SPEED_LABELS, SPEEDS, ExplorerQuery
 from ..opening_insights import (
     MAX_MOVES_PER_POSITION,
@@ -36,11 +39,30 @@ from .board_widget import BoardWidget
 
 log = logging.getLogger(__name__)
 
-COLUMNS = ("Position", "Move", "Played", "Score", "Lower", "Baseline", "Edge", "Popularity")
+COLUMNS = (
+    "Position",
+    "Move",
+    "Eval",
+    "Played",
+    "Score",
+    "Lower",
+    "Baseline",
+    "Edge",
+    "Popularity",
+)
+EVAL_COL = COLUMNS.index("Eval")
 PLAYED_COL = COLUMNS.index("Played")
 BASELINE_COL = COLUMNS.index("Baseline")
 EDGE_COL = COLUMNS.index("Edge")
+EVAL_TOOLTIP = (
+    "Stockfish's evaluation of the position after the move (White's point of view), computed "
+    "in the background whenever the engine is otherwise idle. Green is good for your colour, "
+    "red is bad."
+)
+_UNEVALUATED_SORT_KEY = -(10**9)  # sorts below every real evaluation
 HELP = (
+    "<b>Eval</b> — Stockfish's view of the position after the move (White's point of view), "
+    "to tell a move that merely beats weak alternatives from one that is objectively good.<br>"
     "<b>Played</b> — how often the move is chosen from its position (share of the games "
     "played there); sort by it to push rare moves to the bottom.<br>"
     "<b>Score</b> — wins plus half the draws for your colour, as a share of the move's "
@@ -64,6 +86,12 @@ def format_share(pct: float) -> str:
     return "<0.1%" if 0 < pct < 0.05 else f"{pct:.1f}%"
 
 
+def eval_color(cp_white: int, color: chess.Color) -> str:
+    """Text colour for an evaluation as seen by ``color``: green is good, red is bad."""
+    cp = cp_white if color == chess.WHITE else -cp_white
+    return theme.score_to_color((evaluation.win_chance(cp) + 1) / 2)
+
+
 def tooltip(nm: NotableMove, col: int) -> str | None:
     if col == PLAYED_COL:
         return f"{nm.games:,} of the {nm.position_games:,} games played from this position"
@@ -82,10 +110,15 @@ class InsightsModel(QAbstractTableModel):
     def __init__(self) -> None:
         super().__init__()
         self._rows: list[NotableMove] = []
+        self._evals: dict[int, tuple[int, int]] = {}  # row -> (cp, White's view; depth)
+        self._color: chess.Color = chess.WHITE  # the run's colour: colours the Eval cells
 
-    def clear(self) -> None:
+    def clear(self, color: chess.Color | None = None) -> None:
         self.beginResetModel()
         self._rows = []
+        self._evals = {}
+        if color is not None:
+            self._color = color
         self.endResetModel()
 
     def append(self, nm: NotableMove) -> None:
@@ -97,6 +130,30 @@ class InsightsModel(QAbstractTableModel):
     def at(self, row: int) -> NotableMove | None:
         return self._rows[row] if 0 <= row < len(self._rows) else None
 
+    def set_eval(self, row: int, cp_white: int, depth: int) -> None:
+        """The engine's verdict on a row's move; refreshes only that Eval cell."""
+        if not 0 <= row < len(self._rows):
+            return
+        self._evals[row] = (cp_white, depth)
+        index = self.index(row, EVAL_COL)
+        self.dataChanged.emit(
+            index,
+            index,
+            [
+                Qt.ItemDataRole.DisplayRole,
+                Qt.ItemDataRole.UserRole,
+                Qt.ItemDataRole.ForegroundRole,
+                Qt.ItemDataRole.ToolTipRole,
+            ],
+        )
+
+    def eval_at(self, row: int) -> tuple[int, int] | None:
+        """``(cp from White's view, depth)`` if the engine has evaluated the row's move."""
+        return self._evals.get(row)
+
+    def unevaluated_rows(self) -> list[int]:
+        return [row for row in range(len(self._rows)) if row not in self._evals]
+
     def __len__(self) -> int:
         return len(self._rows)
 
@@ -107,8 +164,12 @@ class InsightsModel(QAbstractTableModel):
         return len(COLUMNS)
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = 0) -> Any:
-        if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
+        if orientation != Qt.Orientation.Horizontal:
+            return None
+        if role == Qt.ItemDataRole.DisplayRole:
             return COLUMNS[section]
+        if role == Qt.ItemDataRole.ToolTipRole and section == EVAL_COL:
+            return EVAL_TOOLTIP
         return None
 
     def data(self, index: QModelIndex, role: int = 0) -> Any:
@@ -116,10 +177,16 @@ class InsightsModel(QAbstractTableModel):
             return None
         nm = self._rows[index.row()]
         col = index.column()
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            align = Qt.AlignmentFlag.AlignLeft if col < 2 else Qt.AlignmentFlag.AlignRight
+            return int(align | Qt.AlignmentFlag.AlignVCenter)
+        if col == EVAL_COL:
+            return self._eval_data(index.row(), role)
         if role == Qt.ItemDataRole.DisplayRole:
             return (
                 position_text(nm),
                 nm.san,
+                None,  # Eval: handled above
                 format_share(nm.play_pct),
                 f"{nm.score_pct:.1f}%",
                 f"{nm.lower_pct:.1f}%",
@@ -131,6 +198,7 @@ class InsightsModel(QAbstractTableModel):
             return (
                 len(nm.line),
                 nm.san,
+                None,  # Eval: handled above
                 nm.play_pct,
                 nm.score_pct,
                 nm.lower_pct,
@@ -140,9 +208,21 @@ class InsightsModel(QAbstractTableModel):
             )[col]
         if role == Qt.ItemDataRole.ToolTipRole:
             return tooltip(nm, col)
-        if role == Qt.ItemDataRole.TextAlignmentRole:
-            align = Qt.AlignmentFlag.AlignLeft if col < 2 else Qt.AlignmentFlag.AlignRight
-            return int(align | Qt.AlignmentFlag.AlignVCenter)
+        return None
+
+    def _eval_data(self, row: int, role: int) -> Any:
+        ev = self._evals.get(row)
+        if role == Qt.ItemDataRole.DisplayRole:
+            return "" if ev is None else evaluation.format_cp(ev[0])
+        if role == Qt.ItemDataRole.UserRole:
+            return _UNEVALUATED_SORT_KEY if ev is None else ev[0]
+        if role == Qt.ItemDataRole.ToolTipRole:
+            if ev is None:
+                return EVAL_TOOLTIP
+            cp, depth = ev
+            return f"Stockfish, depth {depth}: {evaluation.format_cp(cp)} for White after the move"
+        if role == Qt.ItemDataRole.ForegroundRole and ev is not None:
+            return QColor(eval_color(ev[0], self._color))
         return None
 
 
@@ -168,6 +248,7 @@ class InsightsPanel(QWidget):
         cfg: config.AppConfig,
         board: BoardWidget,
         worker: InsightsWorker,
+        depth_provider: Callable[[], int] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -175,6 +256,10 @@ class InsightsPanel(QWidget):
         self._board = board
         self._worker = worker
         self._run_id: int | None = None
+        self._engine: EngineWorker | None = None  # fills the Eval column, once it exists
+        self._depth = depth_provider or (lambda: cfg.depth)
+        self._eval_ids: set[int] = set()  # engine requests in flight
+        self._selected_row: int | None = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -309,7 +394,9 @@ class InsightsPanel(QWidget):
         if params is None:
             return
         state = self._board.state
-        self._model.clear()
+        self._cancel_evals()
+        self._model.clear(params.color)
+        self._selected_row = None
         self._detail.setText("")
         self._board.show_notable(None)
         self._run_btn.setEnabled(False)
@@ -332,6 +419,7 @@ class InsightsPanel(QWidget):
 
     def stop(self) -> None:
         self._worker.stop()
+        self._cancel_evals()
 
     def _on_progress(self, run_id: int, message: str) -> None:
         if run_id == self._run_id:
@@ -340,6 +428,7 @@ class InsightsPanel(QWidget):
     def _on_result(self, run_id: int, nm: NotableMove) -> None:
         if run_id == self._run_id:
             self._model.append(nm)
+            self._request_eval(len(self._model) - 1)
 
     def _on_finished(self, summary: InsightsSummary) -> None:
         if summary.run_id != self._run_id:
@@ -356,21 +445,68 @@ class InsightsPanel(QWidget):
                 f"{verb}. {summary.positions} positions checked, {found} notable move{plural}."
             )
 
+    # ── Engine evaluations ────────────────────────────────────────────────────
+
+    def set_engine(self, engine: EngineWorker | None) -> None:
+        """The engine that fills the Eval column; rows listed before it arrived are queued."""
+        self._engine = engine
+        for row in self._model.unevaluated_rows():
+            self._request_eval(row)
+
+    def _request_eval(self, row: int) -> None:
+        nm = self._model.at(row)
+        if self._engine is None or nm is None:
+            return
+        board = chess.Board(nm.root_fen)
+        for move in nm.position_moves:
+            board.push(move)
+        rid = self._engine.submit(
+            EvalRequest(
+                kind=Kind.IDLE,  # behind hovering, the heatmap and Analyze Game
+                board=board,
+                moves=(nm.move,),
+                depth=self._depth(),
+                on_done=self._on_eval,
+                tag=(self._run_id, row),
+            )
+        )
+        self._eval_ids.add(rid)
+
+    def _cancel_evals(self) -> None:
+        if self._engine is not None:
+            for rid in self._eval_ids:
+                self._engine.cancel(rid)
+        self._eval_ids.clear()
+
+    def _on_eval(self, result: EvalResult) -> None:
+        self._eval_ids.discard(result.request_id)
+        run_id, row = result.tag
+        nm = self._model.at(row) if run_id == self._run_id else None
+        move_eval = None if nm is None else result.move_evals.get(nm.move.uci())
+        if move_eval is None:
+            return  # a stale run, or the engine failed: the cell stays blank
+        self._model.set_eval(row, evaluation.cp_white(move_eval), move_eval.depth)
+        if row == self._selected_row:
+            self._detail.setText(self._explain(nm, self._model.eval_at(row)))
+
     # ── Selection ─────────────────────────────────────────────────────────────
 
     def _on_selection(self, *_args) -> None:
         indexes = self._view.selectionModel().selectedRows()
         if not indexes:
+            self._selected_row = None
             self._detail.setText("")
             return
-        nm = self._model.at(self._proxy.mapToSource(indexes[0]).row())
+        row = self._proxy.mapToSource(indexes[0]).row()
+        nm = self._model.at(row)
         if nm is None:
             return
-        self._detail.setText(self._explain(nm))
+        self._selected_row = row
+        self._detail.setText(self._explain(nm, self._model.eval_at(row)))
         self._board.load_game(chess.Board(nm.root_fen), nm.position_moves)
         self._board.show_notable(nm.move)
 
-    def _explain(self, nm: NotableMove) -> str:
+    def _explain(self, nm: NotableMove, ev: tuple[int, int] | None) -> str:
         colour = self._colour.currentText()
         where = position_text(nm)
         where = "from the starting position" if where == "Start position" else f"after {where}"
@@ -378,11 +514,20 @@ class InsightsPanel(QWidget):
             popularity = "It is also the most played move here."
         else:
             popularity = f"It is only the #{nm.popularity_rank} most played move here."
+        if ev is not None:
+            engine = (
+                f" Stockfish (depth {ev[1]}): {evaluation.format_cp(ev[0])} for White after "
+                "the move."
+            )
+        elif self._engine is not None:
+            engine = " Stockfish has not evaluated it yet."
+        else:
+            engine = ""
         return (
             f"<b>{nm.san}</b> {where}: played in {nm.games:,} of the {nm.position_games:,} "
             f"games here ({format_share(nm.play_pct)}). It scores {nm.score_pct:.1f}% for "
             f"{colour} (95% lower bound {nm.lower_pct:.1f}%) against {nm.baseline_pct:.1f}% "
             f"for the {nm.other_games:,} games of other moves — a gap of "
             f"{nm.score_pct - nm.baseline_pct:.1f} points, at least {nm.edge_pp:.1f} with 95% "
-            f"confidence (the edge). {popularity}"
+            f"confidence (the edge). {popularity}{engine}"
         )
