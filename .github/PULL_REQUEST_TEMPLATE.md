@@ -4,7 +4,7 @@ Briefly describe what this PR does and why.
 
 Closes # (issue number, if applicable)
 
-## Type of Change
+## Type of change
 
 - [ ] Bug fix
 - [ ] New feature
@@ -12,17 +12,21 @@ Closes # (issue number, if applicable)
 - [ ] Documentation update
 - [ ] Other (describe below)
 
-## Changes Made
+## Changes made
 
 - 
 - 
 
 ## Testing
 
-Describe how you tested your changes:
-- [ ] Tested locally with Stockfish engine
-- [ ] Tested Opening Explorer (Lichess API)
-- [ ] Tested hover evaluation / heatmap display
+- [ ] `ruff check .` and `ruff format --check .` pass
+- [ ] `python -m pytest` passes (new logic has tests)
+- [ ] Ran the app and exercised the affected area:
+  - [ ] hover evaluation / heatmap / eval bar
+  - [ ] moving pieces (click, drag, promotion), navigation, PGN/FEN loading
+  - [ ] Analyze Game / Game Review / Engine Lines
+  - [ ] Opening Explorer / Opening Insights (Lichess)
+  - [ ] engine download or `STOCKFISH_PATH` override
 - [ ] No functional changes (docs/formatting only)
 
 ## Screenshots (if applicable)
@@ -31,7 +35,6 @@ Describe how you tested your changes:
 
 ## Checklist
 
-- [ ] My code follows the existing style and conventions
-- [ ] I have not committed any API tokens or sensitive config files
-- [ ] I have tested my changes and they work as expected
-- [ ] I have updated relevant documentation (if needed)
+- [ ] No tokens, engines or data-directory files are committed
+- [ ] Background threads reach Tk only through the `UiDispatcher`
+- [ ] Documentation updated where behaviour changed (README, CHANGELOG)

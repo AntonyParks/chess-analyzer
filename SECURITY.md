@@ -1,30 +1,37 @@
 # Security Policy
 
-## Supported Versions
+## Supported versions
 
-This project is currently in active development. Security updates are applied to the latest version on the `main` branch.
+Security fixes go into the latest release on the `main` branch.
 
-| Version | Supported          |
-| ------- | ------------------ |
+| Version | Supported |
+| ------- | --------- |
 | latest (main) | :white_check_mark: |
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-If you discover a security vulnerability in Chess Analyzer, please **do not** open a public GitHub issue.
+Please **do not** open a public GitHub issue for security problems. Instead:
 
-Instead, report it privately by:
-- Opening a [GitHub Security Advisory](https://github.com/AntonyParks/chess-analyzer/security/advisories/new) in this repository
-- Or contacting the maintainer directly via GitHub: [@AntonyParks](https://github.com/AntonyParks)
+- Open a [GitHub Security Advisory](https://github.com/AntonyParks/chess-analyzer/security/advisories/new)
+  in this repository, or
+- contact the maintainer directly via GitHub: [@AntonyParks](https://github.com/AntonyParks)
 
-Please include:
-- A description of the vulnerability
-- Steps to reproduce the issue
-- Potential impact
-- Any suggested fixes (optional)
+Include a description, steps to reproduce, the potential impact and, if you have one, a
+suggested fix. You will get an acknowledgement as soon as the report is read, and a timeline
+once it is confirmed.
 
-You can expect an acknowledgment within **72 hours** and a resolution timeline once the issue is confirmed.
+## What to know about this app
 
-## Notes
-
-- This tool uses a Lichess API token stored locally. Never commit your API token to the repository.
-- Stockfish is run as a subprocess; ensure you are using a trusted binary from the [official Stockfish source](https://stockfishchess.org/).
+- **Lichess token.** Your personal API token is stored in plain text in `config.json` inside
+  the per-user data directory (`%LOCALAPPDATA%\ChessAnalyzer` on Windows; see the README for
+  other platforms). It is only ever sent to `explorer.lichess.ovh` as a bearer token. It is
+  never written to the log. Create the token without any scopes; if you think it leaked,
+  revoke it at [lichess.org/account/oauth/token](https://lichess.org/account/oauth/token).
+- **Engine download.** Stockfish is downloaded from the official GitHub release at a pinned
+  version, written to a temporary file, checked against a SHA-256 digest pinned in
+  `engine_setup.py`, and only then moved into `engines/` and started. A mismatch aborts the
+  setup and leaves nothing behind.
+- **Engine override.** `STOCKFISH_PATH` (or `--engine`, or the `engine_path` setting) makes
+  the app run whatever binary you point it at. Only use engines you trust.
+- **Network.** The app talks to `github.com` (engine download, first run only) and
+  `explorer.lichess.ovh` (opening data, only when you enable those features). Nothing else.

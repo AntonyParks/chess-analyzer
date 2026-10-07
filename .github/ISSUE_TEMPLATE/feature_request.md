@@ -2,19 +2,18 @@
 name: Feature request
 about: Suggest an idea for this project
 title: ''
-labels: ''
+labels: enhancement
 assignees: ''
 
 ---
 
-**Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
+**What would you like to be able to do?**
+Describe the use case — what you are trying to learn or do with a position or a game.
 
-**Describe the solution you'd like**
-A clear and concise description of what you want to happen.
+**How might it work?**
+Where in the app it would live and what it would show. Mock-ups welcome.
 
-**Describe alternatives you've considered**
-A clear and concise description of any alternative solutions or features you've considered.
+**Alternatives you considered**
 
 **Additional context**
-Add any other context or screenshots about the feature request here.
+Links to similar features elsewhere, sample games, etc.

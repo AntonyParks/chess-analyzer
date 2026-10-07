@@ -1,9 +1,25 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
 .venv/
+venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Partial downloads
+*.part
+
+# Legacy data locations (runtime files now live in the per-user data dir)
 chess_analyzer/engines/
 chess_analyzer/pieces/
 chess_analyzer/config.json
+
+# Editors / tools
 .idea/
-.claude/
+.vscode/
+.claude/settings.local.json

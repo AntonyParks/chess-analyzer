@@ -1,38 +1,32 @@
 ---
 name: Bug report
-about: Create a report to help us improve
+about: Something does not work as expected
 title: ''
-labels: ''
+labels: bug
 assignees: ''
 
 ---
 
-**Describe the bug**
-A clear and concise description of what the bug is.
+**What happened?**
+A clear description of the problem.
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+**Steps to reproduce**
+1. Load '...' (attach the PGN or paste the FEN if a position matters)
+2. Click / hover / press '...'
+3. See '...'
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+**What did you expect?**
+
+**Environment**
+- OS and version: [e.g. Windows 11 23H2, Ubuntu 24.04]
+- Python version: `python --version`
+- App version: `python -m chess_analyzer --version`
+- Engine: the `Engine started: ...` line from the log (e.g. Stockfish 19)
+- Display scaling (Windows): [e.g. 125 %]
+
+**Log excerpt**
+Paste the relevant part of `logs/chess_analyzer.log` from the data directory
+(`%LOCALAPPDATA%\ChessAnalyzer` on Windows). Remove your Lichess token if it appears anywhere.
 
 **Screenshots**
-If applicable, add screenshots to help explain your problem.
-
-**Desktop (please complete the following information):**
- - OS: [e.g. iOS]
- - Browser [e.g. chrome, safari]
- - Version [e.g. 22]
-
-**Smartphone (please complete the following information):**
- - Device: [e.g. iPhone6]
- - OS: [e.g. iOS8.1]
- - Browser [e.g. stock browser, safari]
- - Version [e.g. 22]
-
-**Additional context**
-Add any other context about the problem here.
+If the board or a panel looks wrong, a screenshot or a "Save Image" export helps.
