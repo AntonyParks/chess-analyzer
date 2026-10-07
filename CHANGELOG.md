@@ -16,6 +16,9 @@ The user interface is rebuilt in Qt (PySide6); everything below the UI is unchan
 - The Explorer table remembers its sort separately for White-to-move and Black-to-move
   positions (e.g. White% for your moves, Games for the replies) and switches as you step
   through the game; both are kept across sessions.
+- The Insights table shows how often each listed move is played from its position (a
+  **Played** column with the share of games — sortable, raw counts in the tooltip), so rare
+  sidelines are easy to skip.
 - Insights and Review are tabs instead of pop-up windows; the promotion chooser is drawn on
   the board; coordinates are drawn inside the squares; arrows are translucent and antialiased.
 - Window geometry, state and the recent-files list are remembered.

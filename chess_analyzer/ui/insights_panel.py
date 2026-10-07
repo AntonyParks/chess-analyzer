@@ -36,8 +36,12 @@ from .board_widget import BoardWidget
 
 log = logging.getLogger(__name__)
 
-COLUMNS = ("Position", "Move", "Score", "Lower", "Baseline", "Edge", "Popularity")
+COLUMNS = ("Position", "Move", "Played", "Score", "Lower", "Baseline", "Edge", "Popularity")
+PLAYED_COL = COLUMNS.index("Played")
+EDGE_COL = COLUMNS.index("Edge")
 HELP = (
+    "<b>Played</b> — how often the move is chosen from its position (share of the games "
+    "played there); sort by it to push rare moves to the bottom.<br>"
     "<b>Score</b> — wins plus half the draws for your colour, as a share of games.<br>"
     "<b>Lower</b> — the 95% confidence lower bound of that score (needs enough games).<br>"
     "<b>Baseline</b> — score of the other games played from the same position.<br>"
@@ -45,8 +49,14 @@ HELP = (
     "<b>Min games</b> — games a move needs before it is judged.<br>"
     "<b>Min %</b> — share of the position's games a reply needs before its position is "
     "explored.<br>"
-    "<b>Top N</b> — how many of the opponent's most popular replies are followed (0 = all)."
+    "<b>Top N</b> — how many of the opponent's most popular replies are followed (0 = all).<br>"
+    "<b>Popularity</b> — the move's rank by games in its position (#1 = most played)."
 )
+
+
+def format_share(pct: float) -> str:
+    """A share of games as a percentage; tiny shares read '<0.1%' rather than '0.0%'."""
+    return "<0.1%" if 0 < pct < 0.05 else f"{pct:.1f}%"
 
 
 class InsightsModel(QAbstractTableModel):
@@ -91,6 +101,7 @@ class InsightsModel(QAbstractTableModel):
             return (
                 position_text(nm),
                 nm.san,
+                format_share(nm.play_pct),
                 f"{nm.score_pct:.1f}%",
                 f"{nm.lower_pct:.1f}%",
                 f"{nm.baseline_pct:.1f}%",
@@ -101,12 +112,15 @@ class InsightsModel(QAbstractTableModel):
             return (
                 len(nm.line),
                 nm.san,
+                nm.play_pct,
                 nm.score_pct,
                 nm.lower_pct,
                 nm.baseline_pct,
                 nm.edge_pp,
                 nm.popularity_rank,
             )[col]
+        if role == Qt.ItemDataRole.ToolTipRole and col == PLAYED_COL:
+            return f"{nm.games:,} of the {nm.position_games:,} games played from this position"
         if role == Qt.ItemDataRole.TextAlignmentRole:
             align = Qt.AlignmentFlag.AlignLeft if col < 2 else Qt.AlignmentFlag.AlignRight
             return int(align | Qt.AlignmentFlag.AlignVCenter)
@@ -232,7 +246,7 @@ class InsightsPanel(QWidget):
         self._view = QTableView()
         self._view.setModel(self._proxy)
         self._view.setSortingEnabled(True)
-        self._view.sortByColumn(5, Qt.SortOrder.DescendingOrder)
+        self._view.sortByColumn(EDGE_COL, Qt.SortOrder.DescendingOrder)
         self._view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -346,8 +360,9 @@ class InsightsPanel(QWidget):
         else:
             popularity = f"It is only the #{nm.popularity_rank} most played move here."
         return (
-            f"<b>{nm.san}</b> {where}: scores {nm.score_pct:.1f}% for {colour} over "
-            f"{nm.games:,} games (95% lower bound {nm.lower_pct:.1f}%), against "
-            f"{nm.baseline_pct:.1f}% for the other games in this position — an edge of "
-            f"{nm.edge_pp:.1f} points. {popularity}"
+            f"<b>{nm.san}</b> {where}: played in {nm.games:,} of the {nm.position_games:,} "
+            f"games here ({format_share(nm.play_pct)}). It scores {nm.score_pct:.1f}% for "
+            f"{colour} (95% lower bound {nm.lower_pct:.1f}%), against {nm.baseline_pct:.1f}% "
+            f"for the other games in this position — an edge of {nm.edge_pp:.1f} points. "
+            f"{popularity}"
         )

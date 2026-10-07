@@ -55,6 +55,7 @@ class NotableMove:
     move: chess.Move
     san: str
     games: int
+    position_games: int  # all games played from this position, whatever the move
     score_pct: float  # (wins + ½ draws) / games, in %
     lower_pct: float  # Wilson 95 % lower bound, in %
     baseline_pct: float  # score rate of the other games in the position, in %
@@ -65,6 +66,11 @@ class NotableMove:
     def position_moves(self) -> tuple[chess.Move, ...]:
         """Moves that replay the position in which the notable move is played."""
         return self.prefix_moves + self.line
+
+    @property
+    def play_pct(self) -> float:
+        """How often the move is chosen here: its share of the position's games, in %."""
+        return 100 * self.games / self.position_games if self.position_games else 0.0
 
 
 @dataclass(frozen=True)
@@ -248,6 +254,7 @@ class InsightsWorker:
                             move=stats.move,
                             san=stats.san,
                             games=stats.total,
+                            position_games=result.total,
                             score_pct=round(100 * score, 1),
                             lower_pct=round(100 * lower, 1),
                             baseline_pct=round(100 * baseline, 1),

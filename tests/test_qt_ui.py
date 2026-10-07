@@ -241,6 +241,47 @@ def test_explorer_model_eval_column(app):
     assert model.data(model.index(0, 2), display) == "100"  # the other columns shifted right
 
 
+def test_insights_played_column_shows_how_rare_a_move_is(window):
+    from chess_analyzer.opening_insights import NotableMove
+    from chess_analyzer.ui.insights_panel import COLUMNS, EDGE_COL, PLAYED_COL, InsightsModel
+
+    board = chess.Board()
+
+    def notable(san, games, position_games, edge):
+        return NotableMove(
+            root_fen=chess.STARTING_FEN,
+            prefix_moves=(),
+            line=(),
+            move=board.parse_san(san),
+            san=san,
+            games=games,
+            position_games=position_games,
+            score_pct=55.0,
+            lower_pct=52.0,
+            baseline_pct=50.0,
+            edge_pp=edge,
+            popularity_rank=1,
+        )
+
+    model = InsightsModel()
+    model.append(notable("e4", 400, 700, 2.0))
+    model.append(notable("a4", 2, 7000, 9.0))  # a rarity: 0.03% of the games
+    display, user, tip = (
+        Qt.ItemDataRole.DisplayRole,
+        Qt.ItemDataRole.UserRole,
+        Qt.ItemDataRole.ToolTipRole,
+    )
+    assert COLUMNS[PLAYED_COL] == "Played" and COLUMNS[PLAYED_COL - 1] == "Move"
+    assert model.data(model.index(0, PLAYED_COL), display) == "57.1%"
+    assert model.data(model.index(1, PLAYED_COL), display) == "<0.1%"
+    assert model.data(model.index(0, PLAYED_COL), user) == pytest.approx(400 / 7)
+    assert "400 of the 700 games" in model.data(model.index(0, PLAYED_COL), tip)
+    assert model.data(model.index(1, EDGE_COL), display) == "+9.0"  # later columns intact
+    panel = window._insights
+    assert panel._view.horizontalHeader().sortIndicatorSection() == EDGE_COL  # still by Edge
+    assert "played in 400 of the 700 games here (57.1%)" in panel._explain(model.at(0))
+
+
 def test_explorer_panel_fills_evals_from_the_boards_analysis(window):
     from chess_analyzer.lichess_api import ExplorerResult, MoveStats
     from chess_analyzer.ui.explorer_panel import EVAL_COL

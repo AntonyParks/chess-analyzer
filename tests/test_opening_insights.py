@@ -187,6 +187,8 @@ def test_crawl_flags_only_our_moves_prunes_and_visits_each_position_once():
     nm = next(nm for _r, nm in h.results if nm.san == "Nf3")
     assert nm.position_moves == (e4, e5)
     assert nm.popularity_rank == 1 and nm.games == 400
+    assert nm.position_games == 700  # Nf3 400 + Bc4 300
+    assert nm.play_pct == pytest.approx(400 / 700 * 100)
 
 
 def test_prefix_moves_are_carried_and_run_starts_from_the_given_board():

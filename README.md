@@ -103,9 +103,11 @@ positions, so you can keep, say, White% for your own moves and Games for the rep
 second, and lists moves for your colour that *beat the field*. A move is listed when the lower
 end of a 95 % confidence interval around its score rate (wins plus half the draws) is at least
 **Delta** points above the score rate of the other games in the same position — so rare moves
-with a lucky record do not qualify, but well-supported ones do. **Min games** sets the minimum
-sample, **Min %** and **Top N** limit how deep and wide the search goes. Select a row to replay
-the line on the board; the move is drawn as a purple arrow.
+with a lucky record do not qualify, but well-supported ones do. **Played** shows how often each
+listed move is actually chosen from its position (its share of the games played there), so an
+obscure sideline is easy to skip or sort to the bottom. **Min games** sets the minimum sample,
+**Min %** and **Top N** limit how deep and wide the search goes. Select a row to replay the line
+on the board; the move is drawn as a purple arrow.
 
 ## Keyboard and mouse
 
