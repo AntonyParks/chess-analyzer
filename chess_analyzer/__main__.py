@@ -46,8 +46,7 @@ def main(argv: list[str] | None = None) -> int:
     # Imported late so that --help and --version work without tkinter.
     from .app import main as app_main
 
-    app_main()
-    return 0
+    return app_main()
 
 
 if __name__ == "__main__":

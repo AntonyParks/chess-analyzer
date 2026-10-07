@@ -22,10 +22,10 @@ once it is confirmed.
 
 ## What to know about this app
 
-- **Lichess token.** Your personal API token is stored in plain text in `config.json` inside
-  the per-user data directory (`%LOCALAPPDATA%\ChessAnalyzer` on Windows; see the README for
-  other platforms). It is only ever sent to `explorer.lichess.ovh` as a bearer token. It is
-  never written to the log. Create the token without any scopes; if you think it leaked,
+- **Lichess token.** Your personal API token (entered in Edit ▸ Settings) is stored in plain
+  text in `config.json` inside the per-user data directory (`%LOCALAPPDATA%\ChessAnalyzer` on
+  Windows; see the README for other platforms). It is only ever sent to
+  `explorer.lichess.ovh` as a bearer token. It is never written to the log. Create the token without any scopes; if you think it leaked,
   revoke it at [lichess.org/account/oauth/token](https://lichess.org/account/oauth/token).
 - **Engine download.** Stockfish is downloaded from the official GitHub release at a pinned
   version, written to a temporary file, checked against a SHA-256 digest pinned in

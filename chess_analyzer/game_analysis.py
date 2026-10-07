@@ -1,19 +1,20 @@
-"""Analyze Game (background evaluation of every ply) and the Game Review window."""
+"""Analyze Game: evaluate every ply of the loaded game in the background, then review it.
+
+UI-independent: the runner only needs a way to reach the current ``GameState`` and the
+engine worker; whichever UI is in use connects the callbacks.
+"""
 
 from __future__ import annotations
 
 import logging
-import tkinter as tk
 from collections.abc import Callable
 from dataclasses import dataclass
-from tkinter import ttk
 
 import chess
 
-from .. import evaluation, move_explain, theme
-from ..board_ui import BoardUI
-from ..engine_worker import EngineWorker, EvalRequest, EvalResult, Kind
-from ..game_state import GameState
+from . import evaluation, move_explain
+from .engine_worker import EngineWorker, EvalRequest, EvalResult, Kind
+from .game_state import GameState
 
 log = logging.getLogger(__name__)
 
@@ -30,13 +31,13 @@ class GameAnalysisRunner:
         self,
         *,
         worker: EngineWorker,
-        board_ui: BoardUI,
+        state_provider: Callable[[], GameState],
         depth_provider: Callable[[], int],
         on_progress: Callable[[int, int], None],
         on_finished: Callable[[bool], None],
     ) -> None:
         self._worker = worker
-        self._board_ui = board_ui
+        self._state_provider = state_provider
         self._depth_provider = depth_provider
         self._on_progress = on_progress
         self._on_finished = on_finished
@@ -51,7 +52,7 @@ class GameAnalysisRunner:
         return self._running
 
     def start(self) -> bool:
-        state = self._board_ui.state
+        state = self._state_provider()
         if self._running or not state.moves:
             return False
         self._version = state.version
@@ -100,15 +101,15 @@ class GameAnalysisRunner:
         self._on_finished(False)
 
     def on_state_changed(self) -> None:
-        """Call whenever the board's game may have changed; cancels a stale run."""
-        if self._running and self._board_ui.state.version != self._version:
+        """Call whenever the game may have changed; cancels a run that no longer applies."""
+        if self._running and self._state_provider().version != self._version:
             self.cancel()
 
     def _on_done(self, result: EvalResult) -> None:
         ply = result.tag
         if not self._running or ply not in self._pending:
             return
-        state = self._board_ui.state
+        state = self._state_provider()
         if state.version != self._version:
             self.cancel()
             return
@@ -143,6 +144,11 @@ class ReviewEntry:
     cp_drop: int
     better_san: str | None
     explanation: str
+
+    @property
+    def label(self) -> str:
+        """``'12. Nf3?!'`` / ``'12... Nc6??'``"""
+        return f"{self.move_number}{'.' if self.is_white else '...'} {self.san}{self.marker}"
 
 
 def build_review(state: GameState) -> list[ReviewEntry]:
@@ -181,101 +187,3 @@ def build_review(state: GameState) -> list[ReviewEntry]:
             )
         board.push(move)
     return entries
-
-
-class ReviewWindow:
-    def __init__(
-        self, root: tk.Misc, entries: list[ReviewEntry], on_goto: Callable[[int], None]
-    ) -> None:
-        self.window = tk.Toplevel(root)
-        self.window.title("Game Review")
-        self.window.geometry("540x620")
-        self.window.configure(bg=theme.BG)
-
-        count = len(entries)
-        tk.Label(
-            self.window,
-            text="Game Review",
-            bg=theme.BG,
-            fg=theme.TEXT_BRIGHT,
-            font=theme.ui(12, "bold"),
-        ).pack(pady=(10, 2))
-        tk.Label(
-            self.window,
-            text=f"{count} move{'' if count == 1 else 's'} flagged",
-            bg=theme.BG,
-            fg=theme.TEXT_DIM,
-            font=theme.ui(10),
-        ).pack(pady=(0, 6))
-
-        outer = tk.Frame(self.window, bg=theme.BG)
-        outer.pack(fill="both", expand=True, padx=8, pady=(0, 8))
-        canvas = tk.Canvas(outer, bg=theme.BG, highlightthickness=0)
-        scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
-        inner = tk.Frame(canvas, bg=theme.BG)
-        inner.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.create_window((0, 0), window=inner, anchor="nw")
-        canvas.configure(yscrollcommand=scrollbar.set)
-        scrollbar.pack(side="right", fill="y")
-        canvas.pack(side="left", fill="both", expand=True)
-
-        # Wheel scrolling only while the pointer is over this window (no global leak).
-        def on_wheel(event: tk.Event) -> None:
-            canvas.yview_scroll(-1 * (event.delta // 120), "units")
-
-        canvas.bind("<Enter>", lambda _e: canvas.bind_all("<MouseWheel>", on_wheel))
-        canvas.bind("<Leave>", lambda _e: canvas.unbind_all("<MouseWheel>"))
-        self.window.bind("<Destroy>", lambda _e: canvas.unbind_all("<MouseWheel>"))
-
-        for entry in entries:
-            self._build_card(inner, entry, on_goto)
-
-    @staticmethod
-    def _build_card(parent: tk.Frame, entry: ReviewEntry, on_goto: Callable[[int], None]) -> None:
-        colour = theme.MARKER_COLORS.get(entry.marker, theme.TEXT)
-        card = tk.Frame(parent, bg=theme.CARD)
-        card.pack(fill="x", padx=4, pady=3)
-        tk.Frame(card, bg=colour, width=4).pack(side="left", fill="y")
-        body = tk.Frame(card, bg=theme.CARD)
-        body.pack(side="left", fill="both", expand=True, padx=6, pady=6)
-
-        header = tk.Frame(body, bg=theme.CARD)
-        header.pack(fill="x")
-        dots = "." if entry.is_white else "..."
-        tk.Label(
-            header,
-            text=f"{entry.move_number}{dots} {entry.san}{entry.marker}",
-            bg=theme.CARD,
-            fg=colour,
-            font=theme.ui(11, "bold"),
-        ).pack(side="left")
-        tk.Label(
-            header,
-            text=f"  (−{entry.cp_drop} cp, −{entry.win_drop * 50:.0f}% win chance)",
-            bg=theme.CARD,
-            fg=theme.TEXT_DIM,
-            font=theme.ui(10),
-        ).pack(side="left")
-        ttk.Button(header, text="→ Go", width=5, command=lambda: on_goto(entry.ply)).pack(
-            side="right"
-        )
-        if entry.better_san:
-            tk.Label(
-                body,
-                text=f"Better: {entry.better_san}",
-                bg=theme.CARD,
-                fg=theme.GOOD,
-                font=theme.ui(10, "bold"),
-                anchor="w",
-            ).pack(fill="x", pady=(2, 0))
-        if entry.explanation:
-            tk.Label(
-                body,
-                text=entry.explanation,
-                bg=theme.CARD,
-                fg=theme.TEXT,
-                font=theme.ui(10),
-                anchor="nw",
-                justify="left",
-                wraplength=460,
-            ).pack(fill="x", pady=(2, 0))

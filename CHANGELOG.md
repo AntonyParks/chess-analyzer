@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.1.0 — 2026-10-07
+
+The user interface is rebuilt in Qt (PySide6); everything below the UI is unchanged.
+
+### Added
+- Analysis-board layout: the board fills the window and scales with it; a right column with
+  **Moves**, **Explorer**, **Insights** and **Review** tabs plus **Engine lines**; a resizable
+  splitter whose position is remembered.
+- Menu bar, toolbar and keyboard shortcuts for everything (open/save/recent PGNs, FEN
+  load/copy/paste, navigation, flip/heatmap/arrow, analyse, tabs, settings).
+- **Settings** dialog for the Lichess token (masked) and engine options.
+- Insights and Review are tabs instead of pop-up windows; the promotion chooser is drawn on
+  the board; coordinates are drawn inside the squares; arrows are translucent and antialiased.
+- Window geometry, state and the recent-files list are remembered.
+- Qt layer tests run headless with the `offscreen` platform; CI installs the Qt runtime
+  on Linux.
+
+### Removed
+- The tkinter interface (`board_ui.py`, `panels/`); `UiDispatcher` is replaced by
+  `QueueDispatcher` (tests) and `ui/dispatcher.QtDispatcher` (the app).
+
 ## 1.0.0 — 2026-10-06
 
 A review-and-modernise release: every feature kept, most of the code rewritten.

@@ -30,9 +30,12 @@ Thank you for your interest in contributing! Here's how to get started.
   ```
   `ruff format .` fixes formatting; `ruff check --fix .` fixes the simple lint findings.
 - Put logic that does not need a window into a plain module and give it a test under
-  `tests/`. The tests run headless and must not import tkinter.
-- Never touch Tk from a background thread: hand callables to the `UiDispatcher`
-  (`dispatcher.post(fn, *args)`) and let the main thread run them.
+  `tests/`. Qt code lives in `chess_analyzer/ui/`; its tests run with the `offscreen`
+  platform (`tests/test_qt_ui.py` sets `QT_QPA_PLATFORM` itself; on Linux install the Qt
+  runtime libraries listed in `.github/workflows/ci.yml`).
+- Never touch Qt widgets from a background thread: hand callables to the dispatcher
+  (`dispatcher.post(fn, *args)`) and let the GUI thread run them. `QueueDispatcher` in
+  `ui_dispatch.py` is the toolkit-free version for tests.
 - Engine work goes through `EngineWorker.submit(...)`; results carry the position's EPD, and
   consumers must check it before using them.
 - Keep user-facing errors actionable (what happened, what to do) and log the details.

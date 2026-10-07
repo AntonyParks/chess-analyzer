@@ -4,7 +4,7 @@
 the shown position) and ``BATCH`` (Analyze Game, in the background). Higher-priority work
 preempts lower-priority work between moves and mid-search; a preempted request goes back to
 its slot and resumes from the evaluation cache. Results reach the UI through a
-``UiDispatcher``, so nothing here touches Tk and shutdown cannot deadlock on the main loop.
+``Dispatcher``, so nothing here touches the GUI toolkit and shutdown cannot deadlock.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ import chess
 import chess.engine
 from chess.engine import PovScore
 
-from .ui_dispatch import UiDispatcher
+from .ui_dispatch import Dispatcher
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class EngineWorker:
     def __init__(
         self,
         engine_path: Path | str,
-        dispatcher: UiDispatcher,
+        dispatcher: Dispatcher,
         *,
         threads: int = 0,
         hash_mb: int = 256,
@@ -121,6 +121,7 @@ class EngineWorker:
         self._stop = threading.Event()
 
         self._engine: EngineLike | None = None
+        self.engine_name = ""  # the UCI id name once the engine has started
         self._ever_started = False
         self._failures = 0  # consecutive engine failures; reset by a successful evaluation
         self._dead = False  # the engine failed and could not be restarted
@@ -381,6 +382,7 @@ class EngineWorker:
             return None
         self._configure(engine)
         self._engine = engine
+        self.engine_name = str(engine.id.get("name", ""))
         self._ever_started = True
         log.info(
             "Engine started: %s (Threads=%d, Hash=%d MB)",

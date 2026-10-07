@@ -1,14 +1,9 @@
-"""Colours and fonts in one place.
+"""The colour palette shared by the board painter, the Qt stylesheet and Save Image.
 
-Colour constants are plain strings so pure modules can use them without Tk. Fonts are
-resolved once a Tk root exists (``init``), falling back to common families when the
-Windows ones are missing.
+Plain strings so pure modules (and tests) can use them without a GUI toolkit.
 """
 
 from __future__ import annotations
-
-import tkinter.font as tkfont
-from typing import Any
 
 # ── Window / panels ──────────────────────────────────────────────────────────
 BG = "#2B2B2B"
@@ -89,44 +84,3 @@ def score_to_color(t: float) -> str:
 def rank_color(t: float) -> str:
     """Gold for the best move (t ≥ 1), otherwise the red→green ramp."""
     return GOLD if t >= 1.0 else score_to_color(t)
-
-
-# ── Fonts ────────────────────────────────────────────────────────────────────
-_UI_CANDIDATES = ("Segoe UI", "DejaVu Sans", "Helvetica", "Arial", "TkDefaultFont")
-_MONO_CANDIDATES = ("Consolas", "DejaVu Sans Mono", "Menlo", "Courier New", "TkFixedFont")
-_SYMBOL_CANDIDATES = ("Segoe UI Symbol", "DejaVu Sans", "Arial Unicode MS", "TkDefaultFont")
-
-ui_family = _UI_CANDIDATES[0]
-mono_family = _MONO_CANDIDATES[0]
-symbol_family = _SYMBOL_CANDIDATES[0]
-
-
-def init(root: Any) -> None:
-    """Pick font families that exist on this machine (needs a Tk root)."""
-    global ui_family, mono_family, symbol_family
-    try:
-        available = set(tkfont.families(root))
-    except Exception:  # headless / unusual Tk builds: keep the defaults
-        return
-    ui_family = _first_available(_UI_CANDIDATES, available)
-    mono_family = _first_available(_MONO_CANDIDATES, available)
-    symbol_family = _first_available(_SYMBOL_CANDIDATES, available)
-
-
-def _first_available(candidates: tuple[str, ...], available: set[str]) -> str:
-    for name in candidates:
-        if name in available or name.startswith("Tk"):
-            return name
-    return candidates[-1]
-
-
-def ui(size: int, *styles: str) -> tuple:
-    return (ui_family, size, *styles)
-
-
-def mono(size: int, *styles: str) -> tuple:
-    return (mono_family, size, *styles)
-
-
-def symbol(size: int, *styles: str) -> tuple:
-    return (symbol_family, size, *styles)

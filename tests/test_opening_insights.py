@@ -12,17 +12,9 @@ from chess_analyzer.lichess_api import (
     LichessUnavailable,
     MoveStats,
 )
-from chess_analyzer.ui_dispatch import UiDispatcher
+from chess_analyzer.ui_dispatch import QueueDispatcher
 
 QUERY = ExplorerQuery(("blitz",), (1600,), moves=20)
-
-
-class FakeRoot:
-    def after(self, ms, fn):
-        return "id"
-
-    def after_cancel(self, ident):
-        pass
 
 
 def stats(board: chess.Board, san: str, white: int, draws: int, black: int) -> MoveStats:
@@ -151,7 +143,7 @@ def build_tree():
 
 class Harness:
     def __init__(self, client):
-        self.dispatcher = UiDispatcher(FakeRoot())
+        self.dispatcher = QueueDispatcher()
         self.worker = oi.InsightsWorker(client, self.dispatcher)
         self.progress, self.results, self.finished = [], [], []
 

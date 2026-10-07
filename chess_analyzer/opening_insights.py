@@ -26,7 +26,7 @@ from .lichess_api import (
     LichessUnavailable,
     MoveStats,
 )
-from .ui_dispatch import UiDispatcher
+from .ui_dispatch import Dispatcher
 
 log = logging.getLogger(__name__)
 
@@ -114,7 +114,7 @@ def evaluate_move(
 class InsightsWorker:
     """Breadth-first crawl on a background thread; results arrive via the dispatcher."""
 
-    def __init__(self, client: LichessClient, dispatcher: UiDispatcher) -> None:
+    def __init__(self, client: LichessClient, dispatcher: Dispatcher) -> None:
         self._client = client
         self._dispatcher = dispatcher
         self._stop = threading.Event()

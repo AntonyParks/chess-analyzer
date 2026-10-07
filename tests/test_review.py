@@ -2,8 +2,8 @@ import chess
 from chess.engine import Cp, PovScore
 
 from chess_analyzer.engine_worker import MoveEval
+from chess_analyzer.game_analysis import build_review
 from chess_analyzer.game_state import GameState
-from chess_analyzer.panels.review import build_review
 
 
 def analysed_game(start_fen: str, sans: list[str], cps: list[int], alternatives=None):

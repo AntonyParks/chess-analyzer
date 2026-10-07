@@ -25,6 +25,7 @@ classifiers = [
 dependencies = [
     "chess>=1.11,<2",
     "pillow>=10",
+    "PySide6>=6.8",
 ]
 
 [project.optional-dependencies]

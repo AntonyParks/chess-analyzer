@@ -1,45 +1,48 @@
 # Chess Analyzer
 
-A desktop chess analysis tool built with Python and tkinter. Hover over pieces to see
-Stockfish evaluations, explore move heatmaps, analyse whole games, and look up what real
-players have played from any position.
+A desktop chess analysis tool (Python, Qt, Stockfish). Hover over pieces to see Stockfish
+evaluations, explore move heatmaps, analyse whole games, and look up what real players have
+played from any position.
 
 ![Python](https://img.shields.io/badge/python-3.11%2B-blue)
 [![CI](https://github.com/AntonyParks/chess-analyzer/actions/workflows/ci.yml/badge.svg)](https://github.com/AntonyParks/chess-analyzer/actions/workflows/ci.yml)
 
 ![Chess Analyzer](docs/screenshot.png)
 
-*Hovering the f3 knight: Stockfish scores each of its moves, the heatmap bands every piece
-best-to-worst, the gold arrow marks the engine's top choice (castling), Engine Lines list the
-best continuations, and the Opening Explorer shows what Lichess players did from here.*
+*The board scales to the window. Here the f3 knight is hovered: Stockfish scores each of its
+moves, the heatmap bands every piece best-to-worst, the gold arrow marks the engine's top
+choice, the move list is coloured by move quality, and Engine Lines show the best
+continuations.*
 
 ## Features
 
 - **Hover evaluation** — hover over any piece to see Stockfish's score for every legal move
 - **Piece heatmap** — colour-coded bands on each piece from best (gold) to worst (red)
-- **Position eval bar** and **eval graph** — who is winning now, and over the whole game
-- **Engine Lines** — the top three moves with the engine's continuation; click one to see the
+- **Eval bar** and **eval graph** — who is winning now, and over the whole game
+- **Engine lines** — the top three moves with the engine's continuation; click one to see the
   line on the board with a plain-English note for each move
-- **Analyze Game** — evaluates every position of the loaded game in the background (you can
-  keep browsing), marks inaccuracies, mistakes and blunders in the move list, and builds a
-  **Game Review** with a better alternative for each flagged move
-- **Move history** — clickable, colour-coded move list; arrow keys and the eval graph also navigate
+- **Analyze game** — evaluates every position of the loaded game in the background (keep
+  browsing meanwhile), marks inaccuracies, mistakes and blunders in the move list, and builds
+  a **Review** with a better alternative for each flagged move
+- **Moves** — clickable, colour-coded move list; arrow keys and the eval graph also navigate
 - **Opening Explorer** — what moves real players have made from the current position
   (Lichess data; needs a free API token)
 - **Opening Insights** — walks the Lichess opening tree from the current position and
   surfaces moves whose results are *significantly* better than the alternatives (see below)
 - **Click or drag** to move pieces; promotion is chosen on the board (or press `q`/`r`/`b`/`n`)
-- **PGN import/export** (headers preserved), **FEN load/copy**, **Save Image** (rendered, not a
-  screen grab)
-- **Board flip**, best-move arrow, adjustable search depth
+- **PGN import/export** (headers preserved, recent files), **FEN load/copy/paste**,
+  **Save image** (rendered, not a screen grab)
+- Dark, resizable layout with menus and keyboard shortcuts; settings, window layout and
+  recent files are remembered
 - Stockfish 19 **downloads automatically** on first run
 
 ## Requirements
 
 - Python 3.11 or newer
-- Windows, macOS or Linux. Stockfish downloads automatically on Windows (x64 and ARM64),
-  Linux (x64 and ARM64) and macOS; on anything else, install Stockfish yourself and point
-  `STOCKFISH_PATH` at it (see below). Developed and tested on Windows 11.
+- Windows, macOS or Linux (the UI is Qt via PySide6, installed with the package). Stockfish
+  downloads automatically on Windows (x64 and ARM64), Linux (x64 and ARM64) and macOS; on
+  anything else, install Stockfish yourself and point `STOCKFISH_PATH` at it (see below).
+  Developed and tested on Windows 11.
 
 ## Installation
 
@@ -77,9 +80,9 @@ Environment variables and command-line switches:
 | `STOCKFISH_PATH` / `--engine PATH` | use this engine binary instead of downloading one (any UCI engine works) |
 | `CHESS_ANALYZER_LOG_LEVEL` / `--log-level LEVEL` | `DEBUG`, `INFO` (default), `WARNING`, `ERROR` |
 
-`config.json` also holds `engine_threads` (0 = half your CPUs) and `engine_hash_mb` (256) if
-you want to tune the engine. To upgrade a manually placed engine, delete it from `engines/`
-and restart — the newest binary in that folder is the one used.
+Engine threads and hash size are set in **Edit ▸ Settings** (they apply after a restart). To
+upgrade a manually placed engine, delete it from `engines/` and restart — the newest binary in
+that folder is the one used.
 
 ## Lichess data features (optional)
 
@@ -88,19 +91,18 @@ token (the explorer endpoint rejects anonymous requests):
 
 1. Create a free token at [lichess.org/account/oauth/token](https://lichess.org/account/oauth/token)
    — no scopes are needed.
-2. Tick **Opening Explorer**, paste the token into the field and click **Save**.
+2. Paste it into **Edit ▸ Settings** (`Ctrl+,`).
 
-**Opening Explorer** shows, for the position on the board, how often each move was played and
-how it scored, filtered by time control and rating. Double-click a row to play that move.
+**Explorer tab** — for the position on the board, how often each move was played and how it
+scored, filtered by time control and rating. Double-click a row to play that move.
 
-**Opening Insights** (button in the Eval Display panel) searches the opening tree from the
-current position, one request per second, and lists moves for your colour that *beat the
-field*. A move is listed when the lower end of a 95 % confidence interval around its score
-rate (wins plus half the draws) is at least **Delta** points above the score rate of the
-other games in the same position — so rare moves with a lucky record do not qualify, but
-well-supported ones do. **Min games** sets the minimum sample, **Min %** and **Top N** limit
-how deep and wide the search goes. Select a row to replay the line on the board; the move is
-drawn as a purple arrow.
+**Insights tab** — searches the opening tree from the current position, one request per
+second, and lists moves for your colour that *beat the field*. A move is listed when the lower
+end of a 95 % confidence interval around its score rate (wins plus half the draws) is at least
+**Delta** points above the score rate of the other games in the same position — so rare moves
+with a lucky record do not qualify, but well-supported ones do. **Min games** sets the minimum
+sample, **Min %** and **Top N** limit how deep and wide the search goes. Select a row to replay
+the line on the board; the move is drawn as a purple arrow.
 
 ## Keyboard and mouse
 
@@ -108,8 +110,15 @@ drawn as a purple arrow.
 |--------|-----|
 | Move a piece | click source then destination, or drag |
 | Promote | click the piece in the chooser, or press `q` `r` `b` `n` (`Esc` cancels) |
-| Navigate | `←` `→` `Home` `End`, the ⏮ ◀ ▶ ⏭ buttons, the move list, or the eval graph |
-| Show a line | click an entry in Engine Lines |
+| Navigate | `←` `→` `Home` `End`, the toolbar buttons, the move list, or the eval graph |
+| Flip board / heatmap / best-move arrow | `F` / `H` / `A` |
+| Open PGN / save PGN / save image | `Ctrl+O` / `Ctrl+S` / `Ctrl+Shift+S` |
+| Load FEN / copy FEN / paste FEN | `Ctrl+L` / `Ctrl+Shift+C` / `Ctrl+Shift+V` |
+| Starting position / undo move | `Ctrl+N` / `Ctrl+Z` |
+| Analyze game / Review tab | `F5` / `F6` |
+| Explorer tab / Insights tab | `E` / `Ctrl+I` |
+| Settings | `Ctrl+,` |
+| Show a line | click an entry in Engine lines |
 
 ## Development
 
@@ -119,23 +128,23 @@ ruff check . && ruff format --check .
 python -m pytest
 ```
 
-The pure logic (engine scheduling, evaluation formatting, move explanations, game state,
-Lichess client, Insights statistics, PGN handling, the rendered board image) is covered by
-the test suite and runs headless; the tkinter layer is thin by design. Layout:
+The tests run headless: the Qt tests use the `offscreen` platform (on Linux the Qt runtime
+libraries must be installed — see `.github/workflows/ci.yml`). Layout:
 
 | Module | Role |
 |--------|------|
-| `app.py` | the window, panels wiring, settings |
-| `board_ui.py`, `game_state.py` | the board widget and the game it shows |
+| `app.py` | entry point: data dir, logging, config, the Qt application |
+| `ui/` | the Qt interface: `main_window.py`, `board_widget.py`, eval bar/graph, the tab panels, settings, `dispatcher.py` (the only way background threads reach the GUI thread) |
+| `game_state.py`, `game_analysis.py` | the game being viewed; Analyze Game and the review builder |
 | `engine_worker.py`, `engine_setup.py` | Stockfish process and scheduling; finding/downloading the engine |
 | `evaluation.py`, `move_explain.py` | score formatting/ranking; plain-English move notes |
 | `lichess_api.py`, `opening_insights.py` | Lichess client; the Insights crawl and statistics |
-| `panels/` | history + eval graph, engine lines, explorer, insights, analysis/review |
-| `ui_dispatch.py` | the only way background threads reach Tk |
+| `board_image.py`, `pieces.py`, `theme.py` | Save Image rendering, piece images, the colour palette |
 
 ## Dependencies and credits
 
 - [`chess`](https://python-chess.readthedocs.io/) (python-chess) — board logic, PGN, UCI
+- [`PySide6`](https://doc.qt.io/qtforpython-6/) — the Qt user interface
 - [`pillow`](https://pillow.readthedocs.io/) — piece images and Save Image
 - [Stockfish](https://stockfishchess.org/) — downloaded from the official GitHub release
 - Piece images by [Cburnett](https://commons.wikimedia.org/wiki/Category:SVG_chess_pieces),
@@ -144,4 +153,5 @@ the test suite and runs headless; the tkinter layer is thin by design. Layout:
 
 ## License
 
-MIT — see [LICENSE](LICENSE). The piece images are CC BY-SA 3.0 as noted above.
+MIT — see [LICENSE](LICENSE). The piece images are CC BY-SA 3.0 as noted above. PySide6 is
+LGPL-licensed and used as an unmodified dynamic library.

@@ -6,98 +6,17 @@ import time
 import chess
 import chess.engine
 import pytest
-from chess.engine import Cp, PovScore
+from fakes import FakeEngine
 
 from chess_analyzer.engine_worker import EngineWorker, EvalRequest, Kind
-from chess_analyzer.ui_dispatch import UiDispatcher
-
-
-class FakeRoot:
-    def after(self, ms, fn):
-        return "id"
-
-    def after_cancel(self, ident):
-        pass
-
-
-class FakeAnalysis:
-    """Yields a couple of info lines; can be held open by the test and stopped by the worker."""
-
-    def __init__(self, engine, board, limit):
-        self.engine = engine
-        self.board = board
-        self.depth = limit.depth
-        self.released = threading.Event()
-        self.stopped = False
-        self.info = {}
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.stop()
-        return False
-
-    def stop(self):
-        self.stopped = True
-        self.released.set()
-
-    def __iter__(self):
-        yield {"depth": 1, "score": PovScore(Cp(0), self.board.turn)}
-        self.engine.started.set()
-        deadline = time.monotonic() + 5
-        while self.engine.hold is not None and not self.engine.hold.is_set():
-            if self.stopped or time.monotonic() > deadline:  # stop() ends the search early
-                break
-            time.sleep(0.002)
-        if self.stopped:
-            return
-        cp = self.engine.score_for(self.board)
-        self.info = {
-            "depth": self.depth,
-            "score": PovScore(Cp(cp), self.board.turn),
-            "pv": (next(iter(self.board.legal_moves)),) if self.board.legal_moves else (),
-        }
-        yield self.info
-
-
-class FakeEngine:
-    id = {"name": "Fake 1.0"}
-    options = {"Threads": None, "Hash": None}
-
-    def __init__(self, *, hold: threading.Event | None = None, fail_after: int | None = None):
-        self.hold = hold
-        self.fail_after = fail_after
-        self.calls = 0
-        self.started = threading.Event()
-        self.configured = None
-        self.quit_called = False
-        self.closed = False
-
-    def score_for(self, board):
-        return 10 * len(board.move_stack) + board.piece_map().__len__()
-
-    def configure(self, options):
-        self.configured = dict(options)
-
-    def analysis(self, board, limit):
-        self.calls += 1
-        if self.fail_after is not None and self.calls > self.fail_after:
-            raise chess.engine.EngineTerminatedError("engine process died")
-        return FakeAnalysis(self, board, limit)
-
-    def quit(self):
-        self.quit_called = True
-
-    def close(self):
-        self.closed = True
+from chess_analyzer.ui_dispatch import QueueDispatcher
 
 
 class Harness:
     def __init__(self, engines=None, **worker_kwargs):
         self.engines = list(engines) if engines is not None else [FakeEngine()]
         self.spawned = []
-        self.dispatcher = UiDispatcher(FakeRoot())
+        self.dispatcher = QueueDispatcher()
         self.errors = []
         self.worker = EngineWorker(
             "fake-engine",

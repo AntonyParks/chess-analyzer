@@ -34,9 +34,11 @@ class AppConfig:
     flip: bool = False
     show_arrow: bool = False
     heatmap: bool = True
-    dpi_aware: bool = True
-    window_geometry: str = ""
+    window_geometry: str = ""  # Qt: base64 of QMainWindow.saveGeometry()
+    window_state: str = ""  # Qt: base64 of QMainWindow.saveState()
+    splitter_sizes: list[int] = field(default_factory=list)
     last_pgn_dir: str = ""
+    recent_pgns: list[str] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)  # unknown keys, preserved on save
 
 
