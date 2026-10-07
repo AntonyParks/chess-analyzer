@@ -25,6 +25,12 @@ The user interface is rebuilt in Qt (PySide6); everything below the UI is unchan
 - Qt layer tests run headless with the `offscreen` platform; CI installs the Qt runtime
   on Linux.
 
+### Changed
+- Insights' **Edge** is now the 95 % lower bound of the gap between the move's score and the
+  rest of the position (Newcombe's hybrid score interval), so the baseline's sample size
+  counts too. Previously only the move's sample was discounted, and deep in the tree a
+  popular move could get an enormous edge for beating a handful of stray games.
+
 ### Removed
 - The tkinter interface (`board_ui.py`, `panels/`); `UiDispatcher` is replaced by
   `QueueDispatcher` (tests) and `ui/dispatcher.QtDispatcher` (the app).

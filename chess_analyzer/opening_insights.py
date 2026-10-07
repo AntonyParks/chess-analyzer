@@ -59,7 +59,7 @@ class NotableMove:
     score_pct: float  # (wins + ½ draws) / games, in %
     lower_pct: float  # Wilson 95 % lower bound, in %
     baseline_pct: float  # score rate of the other games in the position, in %
-    edge_pp: float  # lower_pct - baseline_pct
+    edge_pp: float  # 95 % lower bound of (score - baseline), in points; see evaluate_move
     popularity_rank: int  # 1 = most played move here
 
     @property
@@ -72,6 +72,11 @@ class NotableMove:
         """How often the move is chosen here: its share of the position's games, in %."""
         return 100 * self.games / self.position_games if self.position_games else 0.0
 
+    @property
+    def other_games(self) -> int:
+        """Games from the position in which a different move was played (the baseline)."""
+        return self.position_games - self.games
+
 
 @dataclass(frozen=True)
 class InsightsSummary:
@@ -82,15 +87,24 @@ class InsightsSummary:
     error: str | None = None
 
 
-def wilson_lower(successes: float, n: int, z: float = 1.96) -> float:
-    """Lower bound of the Wilson score interval for ``successes`` out of ``n`` trials."""
+def wilson_bounds(successes: float, n: int, z: float = 1.96) -> tuple[float, float]:
+    """The Wilson score interval for ``successes`` out of ``n`` trials, as ``(lower, upper)``.
+
+    No trials means no information: ``(0.0, 1.0)``.
+    """
     if n <= 0:
-        return 0.0
-    p = successes / n
+        return 0.0, 1.0
+    p = min(1.0, max(0.0, successes / n))
     z2 = z * z
     centre = p + z2 / (2 * n)
     margin = z * math.sqrt(p * (1 - p) / n + z2 / (4 * n * n))
-    return max(0.0, (centre - margin) / (1 + z2 / n))
+    scale = 1 + z2 / n
+    return max(0.0, (centre - margin) / scale), min(1.0, (centre + margin) / scale)
+
+
+def wilson_lower(successes: float, n: int, z: float = 1.96) -> float:
+    """Lower bound of the Wilson score interval for ``successes`` out of ``n`` trials."""
+    return wilson_bounds(successes, n, z)[0]
 
 
 def score_points(white: int, draws: int, black: int, color: chess.Color) -> float:
@@ -98,10 +112,28 @@ def score_points(white: int, draws: int, black: int, color: chess.Color) -> floa
     return (white if color == chess.WHITE else black) + 0.5 * draws
 
 
+@dataclass(frozen=True)
+class Verdict:
+    """A notable move's statistics, as fractions."""
+
+    score: float  # (wins + ½ draws) / games
+    lower: float  # Wilson 95 % lower bound of ``score``
+    baseline: float  # score rate of the other games played from the position
+    edge: float  # 95 % lower bound of ``score - baseline``, allowing for both sample sizes
+
+
 def evaluate_move(
     stats: MoveStats, position: ExplorerResult, params: InsightsParams
-) -> tuple[float, float, float] | None:
-    """``(score, lower bound, baseline)`` as fractions if the move is notable, else None."""
+) -> Verdict | None:
+    """The move's statistics if it is notable, else None.
+
+    A move is notable when it beats the other games played from the same position by at
+    least ``delta_pp`` points *with 95 % confidence*. The confidence interval around the gap
+    is Newcombe's hybrid score interval, built from the Wilson intervals of both sides, so
+    the edge shrinks when either sample is small: neither a lucky record over a few games
+    nor a baseline made of a handful of stray games (common deep in the tree) can produce a
+    large edge.
+    """
     n = stats.total
     if n <= 0 or n < params.min_games:
         return None
@@ -110,11 +142,14 @@ def evaluate_move(
     if rest_n <= 0:
         return None
     rest_points = score_points(position.white, position.draws, position.black, params.color)
-    baseline = (rest_points - points) / rest_n
-    lower = wilson_lower(points, n)
-    if (lower - baseline) * 100 < params.delta_pp:
+    rest_points -= points
+    score, baseline = points / n, rest_points / rest_n
+    lower, _ = wilson_bounds(points, n)
+    _, upper = wilson_bounds(rest_points, rest_n)
+    edge = (score - baseline) - math.sqrt((score - lower) ** 2 + (upper - baseline) ** 2)
+    if edge * 100 < params.delta_pp:
         return None
-    return points / n, lower, baseline
+    return Verdict(score, lower, baseline, edge)
 
 
 class InsightsWorker:
@@ -242,7 +277,6 @@ class InsightsWorker:
                     verdict = evaluate_move(stats, result, params)
                     if verdict is None:
                         continue
-                    score, lower, baseline = verdict
                     found += 1
                     post(
                         on_result,
@@ -255,10 +289,10 @@ class InsightsWorker:
                             san=stats.san,
                             games=stats.total,
                             position_games=result.total,
-                            score_pct=round(100 * score, 1),
-                            lower_pct=round(100 * lower, 1),
-                            baseline_pct=round(100 * baseline, 1),
-                            edge_pp=round(100 * (lower - baseline), 1),
+                            score_pct=round(100 * verdict.score, 1),
+                            lower_pct=round(100 * verdict.lower, 1),
+                            baseline_pct=round(100 * verdict.baseline, 1),
+                            edge_pp=round(100 * verdict.edge, 1),
                             popularity_rank=rank[stats.uci],
                         ),
                     )

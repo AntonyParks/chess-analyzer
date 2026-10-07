@@ -56,6 +56,14 @@ def test_wilson_lower_bound_values():
     assert oi.wilson_lower(500, 1000) > oi.wilson_lower(50, 100)  # more games, tighter bound
 
 
+def test_wilson_bounds_upper_end():
+    lower, upper = oi.wilson_bounds(0, 10)
+    assert lower == 0.0 and upper == pytest.approx(0.2775, abs=1e-4)  # mirror of (10, 10)
+    assert oi.wilson_bounds(10, 10) == (pytest.approx(0.7225, abs=1e-4), 1.0)
+    assert oi.wilson_bounds(5, 0) == (0.0, 1.0)  # no games: no information
+    assert oi.wilson_bounds(50, 100)[1] < oi.wilson_bounds(5, 10)[1]  # more games, tighter
+
+
 def test_evaluate_move_baseline_excludes_the_move_and_counts_draws_as_half():
     board = chess.Board()
     good = stats(board, "e4", 70, 20, 10)  # score 80% over 100 games
@@ -63,15 +71,16 @@ def test_evaluate_move_baseline_excludes_the_move_and_counts_draws_as_half():
     pos = position(board, [good, other])
     verdict = oi.evaluate_move(good, pos, params(delta_pp=5))
     assert verdict is not None
-    score, lower, baseline = verdict
-    assert score == pytest.approx(0.80)
-    assert baseline == pytest.approx(0.50)  # the other move only, not 65% for the whole position
-    assert 0.70 < lower < 0.80
+    assert verdict.score == pytest.approx(0.80)
+    assert verdict.baseline == pytest.approx(0.50)  # the other move only, not 65% overall
+    assert 0.70 < verdict.lower < 0.80
+    # The edge is the lower bound of the 30-point gap, discounted for both samples.
+    assert 0.10 < verdict.edge < 0.30
     # With the whole position's totals as the baseline the edge would look smaller; make sure
     # games outside the returned moves still count towards the baseline.
     pos_with_extra = position(board, [good, other], extra=(0, 0, 100))  # 100 unseen black wins
-    _s, _l, baseline2 = oi.evaluate_move(good, pos_with_extra, params(delta_pp=5))
-    assert baseline2 == pytest.approx(50 / 200)
+    verdict2 = oi.evaluate_move(good, pos_with_extra, params(delta_pp=5))
+    assert verdict2.baseline == pytest.approx(50 / 200)
 
 
 def test_evaluate_move_min_games_and_delta_gates():
@@ -79,10 +88,29 @@ def test_evaluate_move_min_games_and_delta_gates():
     move = stats(board, "e4", 9, 0, 0)
     pos = position(board, [move, stats(board, "d4", 50, 0, 50)])
     assert oi.evaluate_move(move, pos, params(min_games=10)) is None
-    strong = stats(board, "e4", 60, 0, 40)
-    pos = position(board, [strong, stats(board, "d4", 50, 0, 50)])
+    strong = stats(board, "e4", 600, 0, 400)  # 60% over 1000 games
+    pos = position(board, [strong, stats(board, "d4", 500, 0, 500)])  # vs 50% over 1000
     assert oi.evaluate_move(strong, pos, params(delta_pp=20)) is None
-    assert oi.evaluate_move(strong, pos, params(delta_pp=0)) is not None
+    verdict = oi.evaluate_move(strong, pos, params(delta_pp=0))
+    assert verdict is not None
+    assert 0 < verdict.edge < verdict.score - verdict.baseline  # conservative, but positive
+    # The same 10-point gap over 100 games each is not significant at all.
+    weak = stats(board, "e4", 60, 0, 40)
+    pos = position(board, [weak, stats(board, "d4", 50, 0, 50)])
+    assert oi.evaluate_move(weak, pos, params(delta_pp=0)) is None
+
+
+def test_edge_discounts_a_baseline_built_from_a_few_stray_games():
+    """Deep in the tree the 'other games' are often a handful of random losses; beating them
+    proves little, so the edge must stay small however popular and decent the move is."""
+    board = chess.Board()
+    move = stats(board, "e4", 29, 0, 21)  # 58% over 50 games
+    stray = position(board, [move, stats(board, "d4", 1, 0, 4)])  # the rest: 5 games at 20%
+    assert oi.wilson_lower(29, 50) - 0.2 > 0.2  # the old 'lower minus baseline' said +24
+    assert oi.evaluate_move(move, stray, params(delta_pp=0)) is None
+    solid = position(board, [move, stats(board, "d4", 100, 0, 400)])  # 500 games at 20%
+    verdict = oi.evaluate_move(move, solid, params(delta_pp=5))
+    assert verdict is not None and verdict.edge > 0.2
 
 
 def test_evaluate_move_for_black_uses_black_wins():
@@ -90,8 +118,8 @@ def test_evaluate_move_for_black_uses_black_wins():
     board.push_san("e4")
     move = stats(board, "c5", 10, 10, 80)
     pos = position(board, [move, stats(board, "e5", 50, 0, 50)])
-    _s, _l, baseline = oi.evaluate_move(move, pos, params(color=chess.BLACK, delta_pp=5))
-    assert baseline == pytest.approx(0.5)
+    verdict = oi.evaluate_move(move, pos, params(color=chess.BLACK, delta_pp=5))
+    assert verdict.baseline == pytest.approx(0.5)
 
 
 # ── the crawl ─────────────────────────────────────────────────────────────────

@@ -38,14 +38,19 @@ log = logging.getLogger(__name__)
 
 COLUMNS = ("Position", "Move", "Played", "Score", "Lower", "Baseline", "Edge", "Popularity")
 PLAYED_COL = COLUMNS.index("Played")
+BASELINE_COL = COLUMNS.index("Baseline")
 EDGE_COL = COLUMNS.index("Edge")
 HELP = (
     "<b>Played</b> — how often the move is chosen from its position (share of the games "
     "played there); sort by it to push rare moves to the bottom.<br>"
-    "<b>Score</b> — wins plus half the draws for your colour, as a share of games.<br>"
-    "<b>Lower</b> — the 95% confidence lower bound of that score (needs enough games).<br>"
-    "<b>Baseline</b> — score of the other games played from the same position.<br>"
-    "<b>Edge</b> — Lower minus Baseline; a move is listed when it reaches the Delta.<br>"
+    "<b>Score</b> — wins plus half the draws for your colour, as a share of the move's "
+    "games.<br>"
+    "<b>Lower</b> — the 95% confidence lower bound of that score (few games → much lower).<br>"
+    "<b>Baseline</b> — score of the other games played from the same position (hover a cell "
+    "for how many).<br>"
+    "<b>Edge</b> — the 95% confidence lower bound of the gap between Score and Baseline, "
+    "allowing for the size of <i>both</i> samples; a move is listed when it reaches the "
+    "Delta. A baseline made of a handful of stray games cannot produce a large edge.<br>"
     "<b>Min games</b> — games a move needs before it is judged.<br>"
     "<b>Min %</b> — share of the position's games a reply needs before its position is "
     "explored.<br>"
@@ -57,6 +62,20 @@ HELP = (
 def format_share(pct: float) -> str:
     """A share of games as a percentage; tiny shares read '<0.1%' rather than '0.0%'."""
     return "<0.1%" if 0 < pct < 0.05 else f"{pct:.1f}%"
+
+
+def tooltip(nm: NotableMove, col: int) -> str | None:
+    if col == PLAYED_COL:
+        return f"{nm.games:,} of the {nm.position_games:,} games played from this position"
+    if col == BASELINE_COL:
+        return f"Score of the {nm.other_games:,} games in which another move was played"
+    if col == EDGE_COL:
+        return (
+            f"Score beats Baseline by {nm.score_pct - nm.baseline_pct:.1f} points; allowing "
+            f"for the size of both samples, the gap is at least {nm.edge_pp:.1f} points with "
+            "95% confidence"
+        )
+    return None
 
 
 class InsightsModel(QAbstractTableModel):
@@ -119,8 +138,8 @@ class InsightsModel(QAbstractTableModel):
                 nm.edge_pp,
                 nm.popularity_rank,
             )[col]
-        if role == Qt.ItemDataRole.ToolTipRole and col == PLAYED_COL:
-            return f"{nm.games:,} of the {nm.position_games:,} games played from this position"
+        if role == Qt.ItemDataRole.ToolTipRole:
+            return tooltip(nm, col)
         if role == Qt.ItemDataRole.TextAlignmentRole:
             align = Qt.AlignmentFlag.AlignLeft if col < 2 else Qt.AlignmentFlag.AlignRight
             return int(align | Qt.AlignmentFlag.AlignVCenter)
@@ -362,7 +381,8 @@ class InsightsPanel(QWidget):
         return (
             f"<b>{nm.san}</b> {where}: played in {nm.games:,} of the {nm.position_games:,} "
             f"games here ({format_share(nm.play_pct)}). It scores {nm.score_pct:.1f}% for "
-            f"{colour} (95% lower bound {nm.lower_pct:.1f}%), against {nm.baseline_pct:.1f}% "
-            f"for the other games in this position — an edge of {nm.edge_pp:.1f} points. "
-            f"{popularity}"
+            f"{colour} (95% lower bound {nm.lower_pct:.1f}%) against {nm.baseline_pct:.1f}% "
+            f"for the {nm.other_games:,} games of other moves — a gap of "
+            f"{nm.score_pct - nm.baseline_pct:.1f} points, at least {nm.edge_pp:.1f} with 95% "
+            f"confidence (the edge). {popularity}"
         )
