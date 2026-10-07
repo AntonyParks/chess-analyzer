@@ -427,6 +427,7 @@ class MainWindow(QMainWindow):
 
     def _on_evals_updated(self, _ply: int, complete: bool) -> None:
         self._refresh_views()
+        self._explorer.on_evals_updated()
         if complete and (self._runner is None or not self._runner.running):
             self._engine_lines.refresh()
         if self._worker is not None and self._worker.engine_name:

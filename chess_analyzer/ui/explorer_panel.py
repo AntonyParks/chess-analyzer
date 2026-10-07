@@ -17,6 +17,7 @@ from PySide6.QtCore import (
     QTimer,
     Signal,
 )
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -29,7 +30,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import config
+from .. import config, evaluation, theme
+from ..engine_worker import MoveEval
 from ..lichess_api import (
     RATING_CHOICES,
     SPEED_LABELS,
@@ -51,18 +53,43 @@ log = logging.getLogger(__name__)
 
 DEBOUNCE_MS = 150
 MAX_ROWS = 12
-COLUMNS = ("Move", "Games", "White", "Draw", "Black", "Avg Elo")
+COLUMNS = ("Move", "Eval", "Games", "White", "Draw", "Black", "Avg Elo")
+EVAL_COL = 1
+GAMES_COL = 2
+EVAL_TOOLTIP = (
+    "Stockfish's evaluation of the position after the move (White's point of view), "
+    "from the analysis of the position on the board. Fills in as the engine finishes "
+    "each move."
+)
+_UNEVALUATED_SORT_KEY = -(10**9)  # sorts below every real evaluation
 
 
 class ExplorerModel(QAbstractTableModel):
     def __init__(self) -> None:
         super().__init__()
         self._rows: list[MoveStats] = []
+        self._evals: dict[str, int] = {}  # uci -> centipawns, White's point of view
+        self._ranks: dict[str, float] = {}  # uci -> 0..1 (1 = best), for the text colour
 
     def set_rows(self, rows: list[MoveStats]) -> None:
         self.beginResetModel()
         self._rows = list(rows)
         self.endResetModel()
+
+    def set_evals(self, move_evals: dict[str, MoveEval], rank_map: dict[str, float]) -> None:
+        """Engine results for the shown position; refreshes only the Eval column."""
+        self._evals = {uci: evaluation.cp_white(me) for uci, me in move_evals.items()}
+        self._ranks = dict(rank_map)
+        if self._rows:
+            self.dataChanged.emit(
+                self.index(0, EVAL_COL),
+                self.index(len(self._rows) - 1, EVAL_COL),
+                [
+                    Qt.ItemDataRole.DisplayRole,
+                    Qt.ItemDataRole.UserRole,
+                    Qt.ItemDataRole.ForegroundRole,
+                ],
+            )
 
     def stats_at(self, row: int) -> MoveStats | None:
         return self._rows[row] if 0 <= row < len(self._rows) else None
@@ -74,8 +101,12 @@ class ExplorerModel(QAbstractTableModel):
         return len(COLUMNS)
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = 0) -> Any:
-        if role == Qt.ItemDataRole.DisplayRole and orientation == Qt.Orientation.Horizontal:
+        if orientation != Qt.Orientation.Horizontal:
+            return None
+        if role == Qt.ItemDataRole.DisplayRole:
             return COLUMNS[section]
+        if role == Qt.ItemDataRole.ToolTipRole and section == EVAL_COL:
+            return EVAL_TOOLTIP
         return None
 
     def data(self, index: QModelIndex, role: int = 0) -> Any:
@@ -83,11 +114,22 @@ class ExplorerModel(QAbstractTableModel):
             return None
         m = self._rows[index.row()]
         col = index.column()
+        cp = self._evals.get(m.uci)
+        if col == EVAL_COL:
+            if role == Qt.ItemDataRole.DisplayRole:
+                return "" if cp is None else evaluation.format_cp(cp)
+            if role == Qt.ItemDataRole.UserRole:
+                return _UNEVALUATED_SORT_KEY if cp is None else cp
+            if role == Qt.ItemDataRole.ForegroundRole and m.uci in self._ranks:
+                return QColor(theme.rank_color(self._ranks[m.uci]))
+            if role == Qt.ItemDataRole.ToolTipRole:
+                return EVAL_TOOLTIP
         total = m.total or 1
         w, d, b = percentages(m.white, m.draws, m.black)
         if role == Qt.ItemDataRole.DisplayRole:
             return (
                 m.san,
+                None,
                 f"{m.total:,}",
                 f"{w}%",
                 f"{d}%",
@@ -97,6 +139,7 @@ class ExplorerModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.UserRole:  # sort keys
             return (
                 m.san,
+                None,
                 m.total,
                 m.white / total,
                 m.draws / total,
@@ -191,7 +234,7 @@ class ExplorerPanel(QWidget):
         self._view = QTableView()
         self._view.setModel(self._proxy)
         self._view.setSortingEnabled(True)
-        self._view.sortByColumn(1, Qt.SortOrder.DescendingOrder)
+        self._view.sortByColumn(GAMES_COL, Qt.SortOrder.DescendingOrder)
         self._view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -224,6 +267,19 @@ class ExplorerPanel(QWidget):
     def on_navigate(self) -> None:
         if self._active:
             self._debounce.start()
+
+    def on_evals_updated(self) -> None:
+        """Engine results for the shown position arrived: refresh the Eval column."""
+        if self._shown is not None and self._shown.epd == self._board.board.epd():
+            self._apply_evals()
+
+    def _apply_evals(self) -> None:
+        state = self._board.state
+        analysis = state.analysis.get(state.current_ply)
+        if analysis is None:
+            self._model.set_evals({}, {})
+        else:
+            self._model.set_evals(analysis.move_evals, analysis.rank_map)
 
     def token_changed(self) -> None:
         self._client.clear_cache()
@@ -312,6 +368,7 @@ class ExplorerPanel(QWidget):
         else:
             self._status.setText("No games found for these filters")
         self._model.set_rows(list(result.moves))
+        self._apply_evals()
         self._board.set_explorer_move_order([m.uci for m in result.moves])
 
     # ── Interaction ───────────────────────────────────────────────────────────

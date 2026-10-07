@@ -210,3 +210,55 @@ def test_main_window_saves_layout_on_close(window, tmp_path):
     saved = config.load(tmp_path / "config.json")
     assert saved.window_geometry and saved.window_state
     assert all(s > 0 for s in saved.splitter_sizes)
+
+
+# ── explorer eval column ──────────────────────────────────────────────────────
+
+
+def test_explorer_model_eval_column(app):
+    from chess.engine import Cp, PovScore
+
+    from chess_analyzer.engine_worker import MoveEval
+    from chess_analyzer.lichess_api import MoveStats
+    from chess_analyzer.ui.explorer_panel import EVAL_COL, ExplorerModel
+
+    board = chess.Board()
+    rows = [
+        MoveStats(board.parse_san("e4"), "e4", 50, 10, 40, 1800),
+        MoveStats(board.parse_san("d4"), "d4", 40, 10, 50, 1800),
+    ]
+    model = ExplorerModel()
+    model.set_rows(rows)
+    display = Qt.ItemDataRole.DisplayRole
+    assert model.data(model.index(0, EVAL_COL), display) == ""
+    # Black-relative -30 after e4 is +0.3 for White.
+    model.set_evals({"e2e4": MoveEval(PovScore(Cp(-30), chess.BLACK), (), 5)}, {"e2e4": 1.0})
+    assert model.data(model.index(0, EVAL_COL), display) == "+0.3"
+    assert model.data(model.index(1, EVAL_COL), display) == ""
+    assert model.data(model.index(0, EVAL_COL), Qt.ItemDataRole.UserRole) == 30
+    assert model.data(model.index(1, EVAL_COL), Qt.ItemDataRole.UserRole) < -(10**8)
+    assert model.data(model.index(0, EVAL_COL), Qt.ItemDataRole.ForegroundRole) is not None
+    assert model.data(model.index(0, 2), display) == "100"  # the other columns shifted right
+
+
+def test_explorer_panel_fills_evals_from_the_boards_analysis(window):
+    from chess_analyzer.lichess_api import ExplorerResult, MoveStats
+    from chess_analyzer.ui.explorer_panel import EVAL_COL
+
+    assert wait_until(lambda: window._worker is not None)
+    board = window._board
+    assert wait_until(lambda: (a := board.state.analysis.get(0)) is not None and a.complete)
+    position = board.board
+    result = ExplorerResult(
+        position.epd(),
+        100,
+        10,
+        90,
+        (MoveStats(position.parse_san("e4"), "e4", 50, 5, 45, 1800),),
+        "",
+        "",
+    )
+    panel = window._explorer
+    panel._populate(result)
+    text = panel._model.data(panel._model.index(0, EVAL_COL), Qt.ItemDataRole.DisplayRole)
+    assert text and text[0] in "+-M#"

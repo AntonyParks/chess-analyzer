@@ -94,7 +94,9 @@ token (the explorer endpoint rejects anonymous requests):
 2. Paste it into **Edit ▸ Settings** (`Ctrl+,`).
 
 **Explorer tab** — for the position on the board, how often each move was played and how it
-scored, filtered by time control and rating. Double-click a row to play that move.
+scored, filtered by time control and rating, next to Stockfish's evaluation of each move (the
+**Eval** column fills in as the engine finishes the position). Double-click a row to play that
+move.
 
 **Insights tab** — searches the opening tree from the current position, one request per
 second, and lists moves for your colour that *beat the field*. A move is listed when the lower
