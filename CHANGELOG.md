@@ -29,10 +29,13 @@ The user interface is rebuilt in Qt (PySide6); everything below the UI is unchan
   on Linux.
 
 ### Changed
-- Insights' **Edge** is now the 95 % lower bound of the gap between the move's score and the
-  rest of the position (Newcombe's hybrid score interval), so the baseline's sample size
-  counts too. Previously only the move's sample was discounted, and deep in the tree a
-  popular move could get an enormous edge for beating a handful of stray games.
+- Opening Insights looks for *challenging* moves. For each of your moves it finds the
+  opponent's most reliable reply (Wilson-adjusted, so a rare fluke cannot be "best") and lists
+  the move when opponents fall short of that reply by at least **Delta** points on average, as
+  a 95 % lower bound (**Challenge**). The old test — beating the other moves in the same
+  position — was dominated by forced moves and junk alternatives (a 99.9 % recapture got an
+  "edge" of +30 for beating the blunders). The columns are now Eval, Played, Score, Best
+  reply and Challenge.
 
 ### Removed
 - The tkinter interface (`board_ui.py`, `panels/`); `UiDispatcher` is replaced by

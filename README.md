@@ -28,7 +28,7 @@ continuations.*
 - **Opening Explorer** — what moves real players have made from the current position
   (Lichess data; needs a free API token)
 - **Opening Insights** — walks the Lichess opening tree from the current position and
-  surfaces moves whose results are *significantly* better than the alternatives (see below)
+  surfaces *challenging* moves: ones after which opponents historically go wrong (see below)
 - **Click or drag** to move pieces; promotion is chosen on the board (or press `q`/`r`/`b`/`n`)
 - **PGN import/export** (headers preserved, recent files), **FEN load/copy/paste**,
   **Save image** (rendered, not a screen grab)
@@ -100,19 +100,18 @@ move. The table's sort is remembered separately for White-to-move and Black-to-m
 positions, so you can keep, say, White% for your own moves and Games for the replies.
 
 **Insights tab** — searches the opening tree from the current position, one request per
-second, and lists moves for your colour that *beat the field*. A move is listed when its score
-rate (wins plus half the draws) beats the score rate of the other games in the same position
-by at least **Delta** points *with 95 % confidence*. The confidence interval allows for the
-size of both samples, so neither a lucky record over a few games nor a baseline made of a
-handful of stray games deep in the tree qualifies, but well-supported moves do. **Edge** is
-that confidence-adjusted gap. **Played** shows how often each
-listed move is actually chosen from its position (its share of the games played there), so an
-obscure sideline is easy to skip or sort to the bottom. **Eval** is Stockfish's verdict on the
-position after each listed move (White's point of view, coloured for your colour), filled in
-whenever the engine is otherwise idle — it tells a move that merely beats weak alternatives
-from one that is objectively good. **Min games** sets the minimum sample, **Min %** and
-**Top N** limit how deep and wide the search goes. Select a row to replay the line on the
-board; the move is drawn as a purple arrow.
+second, and lists *challenging* moves for your colour: moves after which opponents
+historically go wrong. For each of your moves it looks at the opponent's replies, finds their
+most reliable one — the reply that holds your score down most, allowing for how many games it
+has — and measures how far short of it opponents fall on average. A move is listed when that
+shortfall, as a 95 % lower bound (**Challenge**), reaches **Delta** points. This is deliberately
+a *practical* test: a line the engine calls equal can still be a nightmare to play for one
+side, so the **Eval** column shows Stockfish's verdict separately (filled in whenever the
+engine is otherwise idle) and **Best reply** shows what a well-prepared opponent would play.
+**Played** shows how often each listed move is actually chosen from its position, so an
+obscure sideline is easy to skip or sort to the bottom. **Min games** sets the minimum sample,
+**Min %** and **Top N** limit how deep and wide the search goes. Select a row to replay the
+line on the board; the move is drawn as a purple arrow.
 
 ## Keyboard and mouse
 

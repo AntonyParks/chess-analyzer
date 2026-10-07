@@ -243,11 +243,17 @@ def test_explorer_model_eval_column(app):
 
 def test_insights_played_column_shows_how_rare_a_move_is(window):
     from chess_analyzer.opening_insights import NotableMove
-    from chess_analyzer.ui.insights_panel import COLUMNS, EDGE_COL, PLAYED_COL, InsightsModel
+    from chess_analyzer.ui.insights_panel import (
+        CHALLENGE_COL,
+        COLUMNS,
+        PLAYED_COL,
+        REPLY_COL,
+        InsightsModel,
+    )
 
     board = chess.Board()
 
-    def notable(san, games, position_games, edge):
+    def notable(san, games, position_games, challenge):
         return NotableMove(
             root_fen=chess.STARTING_FEN,
             prefix_moves=(),
@@ -257,9 +263,11 @@ def test_insights_played_column_shows_how_rare_a_move_is(window):
             games=games,
             position_games=position_games,
             score_pct=55.0,
-            lower_pct=52.0,
-            baseline_pct=50.0,
-            edge_pp=edge,
+            score_games=games,
+            best_reply_san="e5",
+            best_reply_share=60.0,
+            best_reply_pct=50.0,
+            challenge_pp=challenge,
             popularity_rank=1,
         )
 
@@ -276,10 +284,14 @@ def test_insights_played_column_shows_how_rare_a_move_is(window):
     assert model.data(model.index(1, PLAYED_COL), display) == "<0.1%"
     assert model.data(model.index(0, PLAYED_COL), user) == pytest.approx(400 / 7)
     assert "400 of the 700 games" in model.data(model.index(0, PLAYED_COL), tip)
-    assert model.data(model.index(1, EDGE_COL), display) == "+9.0"  # later columns intact
+    assert model.data(model.index(1, CHALLENGE_COL), display) == "+9.0"  # later columns intact
+    assert model.data(model.index(0, REPLY_COL), display) == "e5 50.0%"
+    assert "e5 is played in 60.0%" in model.data(model.index(0, REPLY_COL), tip)
     panel = window._insights
-    assert panel._view.horizontalHeader().sortIndicatorSection() == EDGE_COL  # still by Edge
-    assert "played in 400 of the 700 games here (57.1%)" in panel._explain(model.at(0), None)
+    assert panel._view.horizontalHeader().sortIndicatorSection() == CHALLENGE_COL
+    text = panel._explain(model.at(0), None)
+    assert "played in 400 of the 700 games here (57.1%)" in text
+    assert "Black's most reliable reply is <b>e5</b>" in text and "at least 2.0" in text
 
 
 def test_insights_eval_column_is_filled_by_the_engine_in_the_background(window):
@@ -298,9 +310,11 @@ def test_insights_eval_column_is_filled_by_the_engine_in_the_background(window):
         games=400,
         position_games=700,
         score_pct=55.0,
-        lower_pct=52.0,
-        baseline_pct=50.0,
-        edge_pp=2.0,
+        score_games=400,
+        best_reply_san="e5",
+        best_reply_share=60.0,
+        best_reply_pct=50.0,
+        challenge_pp=2.0,
         popularity_rank=1,
     )
     panel._run_id = 7

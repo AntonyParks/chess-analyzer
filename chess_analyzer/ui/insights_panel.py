@@ -39,21 +39,12 @@ from .board_widget import BoardWidget
 
 log = logging.getLogger(__name__)
 
-COLUMNS = (
-    "Position",
-    "Move",
-    "Eval",
-    "Played",
-    "Score",
-    "Lower",
-    "Baseline",
-    "Edge",
-    "Popularity",
-)
+COLUMNS = ("Position", "Move", "Eval", "Played", "Score", "Best reply", "Challenge")
 EVAL_COL = COLUMNS.index("Eval")
 PLAYED_COL = COLUMNS.index("Played")
-BASELINE_COL = COLUMNS.index("Baseline")
-EDGE_COL = COLUMNS.index("Edge")
+SCORE_COL = COLUMNS.index("Score")
+REPLY_COL = COLUMNS.index("Best reply")
+CHALLENGE_COL = COLUMNS.index("Challenge")
 EVAL_TOOLTIP = (
     "Stockfish's evaluation of the position after the move (White's point of view), computed "
     "in the background whenever the engine is otherwise idle. Green is good for your colour, "
@@ -61,23 +52,21 @@ EVAL_TOOLTIP = (
 )
 _UNEVALUATED_SORT_KEY = -(10**9)  # sorts below every real evaluation
 HELP = (
-    "<b>Eval</b> — Stockfish's view of the position after the move (White's point of view), "
-    "to tell a move that merely beats weak alternatives from one that is objectively good.<br>"
+    "<b>Eval</b> — Stockfish's view of the position after the move (White's point of view); "
+    "a challenging move need not be one the engine likes.<br>"
     "<b>Played</b> — how often the move is chosen from its position (share of the games "
     "played there); sort by it to push rare moves to the bottom.<br>"
-    "<b>Score</b> — wins plus half the draws for your colour, as a share of the move's "
-    "games.<br>"
-    "<b>Lower</b> — the 95% confidence lower bound of that score (few games → much lower).<br>"
-    "<b>Baseline</b> — score of the other games played from the same position (hover a cell "
-    "for how many).<br>"
-    "<b>Edge</b> — the 95% confidence lower bound of the gap between Score and Baseline, "
-    "allowing for the size of <i>both</i> samples; a move is listed when it reaches the "
-    "Delta. A baseline made of a handful of stray games cannot produce a large edge.<br>"
+    "<b>Score</b> — wins plus half the draws for your colour, over the games after the "
+    "move.<br>"
+    "<b>Best reply</b> — the opponent's most reliable answer: the reply that holds your score "
+    "down most, allowing for how many games it has — with your score after it.<br>"
+    "<b>Challenge</b> — how far short of that reply opponents fall on average, as a 95% "
+    "confidence lower bound: the higher, the more often opponents go wrong after the move. "
+    "A move is listed when it reaches the Delta.<br>"
     "<b>Min games</b> — games a move needs before it is judged.<br>"
-    "<b>Min %</b> — share of the position's games a reply needs before its position is "
-    "explored.<br>"
-    "<b>Top N</b> — how many of the opponent's most popular replies are followed (0 = all).<br>"
-    "<b>Popularity</b> — the move's rank by games in its position (#1 = most played)."
+    "<b>Min %</b> — share of its position's games a move needs before it is examined (as "
+    "your move, or as a candidate best reply).<br>"
+    "<b>Top N</b> — how many of the opponent's most popular replies are followed (0 = all)."
 )
 
 
@@ -95,13 +84,17 @@ def eval_color(cp_white: int, color: chess.Color) -> str:
 def tooltip(nm: NotableMove, col: int) -> str | None:
     if col == PLAYED_COL:
         return f"{nm.games:,} of the {nm.position_games:,} games played from this position"
-    if col == BASELINE_COL:
-        return f"Score of the {nm.other_games:,} games in which another move was played"
-    if col == EDGE_COL:
+    if col == SCORE_COL:
+        return f"Over the {nm.score_games:,} games reaching the position after the move"
+    if col == REPLY_COL:
         return (
-            f"Score beats Baseline by {nm.score_pct - nm.baseline_pct:.1f} points; allowing "
-            f"for the size of both samples, the gap is at least {nm.edge_pp:.1f} points with "
-            "95% confidence"
+            f"{nm.best_reply_san} is played in {format_share(nm.best_reply_share)} of those "
+            f"games and holds your score to {nm.best_reply_pct:.1f}%"
+        )
+    if col == CHALLENGE_COL:
+        return (
+            f"On average opponents score {nm.score_pct - nm.best_reply_pct:.1f} points worse "
+            f"than their best reply would; at least {nm.challenge_pp:.1f} with 95% confidence"
         )
     return None
 
@@ -147,6 +140,11 @@ class InsightsModel(QAbstractTableModel):
             ],
         )
 
+    @property
+    def color(self) -> chess.Color:
+        """The colour the listed moves are for."""
+        return self._color
+
     def eval_at(self, row: int) -> tuple[int, int] | None:
         """``(cp from White's view, depth)`` if the engine has evaluated the row's move."""
         return self._evals.get(row)
@@ -178,7 +176,8 @@ class InsightsModel(QAbstractTableModel):
         nm = self._rows[index.row()]
         col = index.column()
         if role == Qt.ItemDataRole.TextAlignmentRole:
-            align = Qt.AlignmentFlag.AlignLeft if col < 2 else Qt.AlignmentFlag.AlignRight
+            left = col in (0, 1, REPLY_COL)
+            align = Qt.AlignmentFlag.AlignLeft if left else Qt.AlignmentFlag.AlignRight
             return int(align | Qt.AlignmentFlag.AlignVCenter)
         if col == EVAL_COL:
             return self._eval_data(index.row(), role)
@@ -189,10 +188,8 @@ class InsightsModel(QAbstractTableModel):
                 None,  # Eval: handled above
                 format_share(nm.play_pct),
                 f"{nm.score_pct:.1f}%",
-                f"{nm.lower_pct:.1f}%",
-                f"{nm.baseline_pct:.1f}%",
-                f"+{nm.edge_pp:.1f}",
-                f"#{nm.popularity_rank}",
+                f"{nm.best_reply_san} {nm.best_reply_pct:.1f}%",
+                f"+{nm.challenge_pp:.1f}",
             )[col]
         if role == Qt.ItemDataRole.UserRole:
             return (
@@ -201,10 +198,8 @@ class InsightsModel(QAbstractTableModel):
                 None,  # Eval: handled above
                 nm.play_pct,
                 nm.score_pct,
-                nm.lower_pct,
-                nm.baseline_pct,
-                nm.edge_pp,
-                nm.popularity_rank,
+                nm.best_reply_pct,
+                nm.challenge_pp,
             )[col]
         if role == Qt.ItemDataRole.ToolTipRole:
             return tooltip(nm, col)
@@ -350,7 +345,7 @@ class InsightsPanel(QWidget):
         self._view = QTableView()
         self._view.setModel(self._proxy)
         self._view.setSortingEnabled(True)
-        self._view.sortByColumn(EDGE_COL, Qt.SortOrder.DescendingOrder)
+        self._view.sortByColumn(CHALLENGE_COL, Qt.SortOrder.DescendingOrder)
         self._view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self._view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -507,7 +502,8 @@ class InsightsPanel(QWidget):
         self._board.show_notable(nm.move)
 
     def _explain(self, nm: NotableMove, ev: tuple[int, int] | None) -> str:
-        colour = self._colour.currentText()
+        colour = "White" if self._model.color == chess.WHITE else "Black"
+        opponent = "Black" if colour == "White" else "White"
         where = position_text(nm)
         where = "from the starting position" if where == "Start position" else f"after {where}"
         if nm.popularity_rank == 1:
@@ -525,9 +521,10 @@ class InsightsPanel(QWidget):
             engine = ""
         return (
             f"<b>{nm.san}</b> {where}: played in {nm.games:,} of the {nm.position_games:,} "
-            f"games here ({format_share(nm.play_pct)}). It scores {nm.score_pct:.1f}% for "
-            f"{colour} (95% lower bound {nm.lower_pct:.1f}%) against {nm.baseline_pct:.1f}% "
-            f"for the {nm.other_games:,} games of other moves — a gap of "
-            f"{nm.score_pct - nm.baseline_pct:.1f} points, at least {nm.edge_pp:.1f} with 95% "
-            f"confidence (the edge). {popularity}{engine}"
+            f"games here ({format_share(nm.play_pct)}); {colour} scores {nm.score_pct:.1f}% "
+            f"after it. {opponent}'s most reliable reply is <b>{nm.best_reply_san}</b> (played "
+            f"{format_share(nm.best_reply_share)} of the time), which holds {colour} to "
+            f"{nm.best_reply_pct:.1f}% — on average {opponent} falls "
+            f"{nm.score_pct - nm.best_reply_pct:.1f} points short of that, at least "
+            f"{nm.challenge_pp:.1f} with 95% confidence (the challenge). {popularity}{engine}"
         )

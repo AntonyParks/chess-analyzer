@@ -64,62 +64,59 @@ def test_wilson_bounds_upper_end():
     assert oi.wilson_bounds(50, 100)[1] < oi.wilson_bounds(5, 10)[1]  # more games, tighter
 
 
-def test_evaluate_move_baseline_excludes_the_move_and_counts_draws_as_half():
-    board = chess.Board()
-    good = stats(board, "e4", 70, 20, 10)  # score 80% over 100 games
-    other = stats(board, "d4", 40, 20, 40)  # 50%
-    pos = position(board, [good, other])
-    verdict = oi.evaluate_move(good, pos, params(delta_pp=5))
-    assert verdict is not None
-    assert verdict.score == pytest.approx(0.80)
-    assert verdict.baseline == pytest.approx(0.50)  # the other move only, not 65% overall
-    assert 0.70 < verdict.lower < 0.80
-    # The edge is the lower bound of the 30-point gap, discounted for both samples.
-    assert 0.10 < verdict.edge < 0.30
-    # With the whole position's totals as the baseline the edge would look smaller; make sure
-    # games outside the returned moves still count towards the baseline.
-    pos_with_extra = position(board, [good, other], extra=(0, 0, 100))  # 100 unseen black wins
-    verdict2 = oi.evaluate_move(good, pos_with_extra, params(delta_pp=5))
-    assert verdict2.baseline == pytest.approx(50 / 200)
-
-
-def test_evaluate_move_min_games_and_delta_gates():
-    board = chess.Board()
-    move = stats(board, "e4", 9, 0, 0)
-    pos = position(board, [move, stats(board, "d4", 50, 0, 50)])
-    assert oi.evaluate_move(move, pos, params(min_games=10)) is None
-    strong = stats(board, "e4", 600, 0, 400)  # 60% over 1000 games
-    pos = position(board, [strong, stats(board, "d4", 500, 0, 500)])  # vs 50% over 1000
-    assert oi.evaluate_move(strong, pos, params(delta_pp=20)) is None
-    verdict = oi.evaluate_move(strong, pos, params(delta_pp=0))
-    assert verdict is not None
-    assert 0 < verdict.edge < verdict.score - verdict.baseline  # conservative, but positive
-    # The same 10-point gap over 100 games each is not significant at all.
-    weak = stats(board, "e4", 60, 0, 40)
-    pos = position(board, [weak, stats(board, "d4", 50, 0, 50)])
-    assert oi.evaluate_move(weak, pos, params(delta_pp=0)) is None
-
-
-def test_edge_discounts_a_baseline_built_from_a_few_stray_games():
-    """Deep in the tree the 'other games' are often a handful of random losses; beating them
-    proves little, so the edge must stay small however popular and decent the move is."""
-    board = chess.Board()
-    move = stats(board, "e4", 29, 0, 21)  # 58% over 50 games
-    stray = position(board, [move, stats(board, "d4", 1, 0, 4)])  # the rest: 5 games at 20%
-    assert oi.wilson_lower(29, 50) - 0.2 > 0.2  # the old 'lower minus baseline' said +24
-    assert oi.evaluate_move(move, stray, params(delta_pp=0)) is None
-    solid = position(board, [move, stats(board, "d4", 100, 0, 400)])  # 500 games at 20%
-    verdict = oi.evaluate_move(move, solid, params(delta_pp=5))
-    assert verdict is not None and verdict.edge > 0.2
-
-
-def test_evaluate_move_for_black_uses_black_wins():
+def test_judge_move_measures_how_far_opponents_fall_short_of_their_best_reply():
+    """The position after our move, Black to reply: Nc6 is popular and bad for Black, Nf6 is
+    the reliable defence, a5 is a 10-game fluke."""
     board = chess.Board()
     board.push_san("e4")
-    move = stats(board, "c5", 10, 10, 80)
-    pos = position(board, [move, stats(board, "e5", 50, 0, 50)])
-    verdict = oi.evaluate_move(move, pos, params(color=chess.BLACK, delta_pp=5))
-    assert verdict.baseline == pytest.approx(0.5)
+    nc6 = stats(board, "Nc6", 360, 60, 180)  # White scores 65% over 600 games
+    nf6 = stats(board, "Nf6", 120, 60, 120)  # 50% over 300
+    a5 = stats(board, "a5", 2, 0, 8)  # 20% over 10
+    after = position(board, [nc6, nf6, a5])  # 59.6% over 910
+    verdict = oi.judge_move(after, params(min_pct=5, delta_pp=0))
+    assert verdict is not None
+    assert verdict.score == pytest.approx(542 / 910) and verdict.games == 910
+    assert verdict.best_reply.san == "Nf6" and verdict.best_reply_score == pytest.approx(0.5)
+    assert 0.02 < verdict.challenge < 0.05  # the 9.6-point gap, discounted for both samples
+    assert oi.judge_move(after, params(min_pct=5, delta_pp=5)) is None  # below the delta
+    # With Min % at 0 the fluke counts too; its wide interval still caps what it can claim.
+    loose = oi.judge_move(after, params(min_pct=0, delta_pp=0))
+    assert loose.best_reply.san == "a5" and 0.05 < loose.challenge < 0.12
+
+
+def test_judge_move_needs_games_and_replies():
+    board = chess.Board()
+    board.push_san("e4")
+    after = position(board, [stats(board, "Nc6", 360, 60, 180), stats(board, "Nf6", 120, 60, 120)])
+    assert oi.judge_move(after, params(min_games=1000, delta_pp=0)) is None
+    assert oi.judge_move(position(board, []), params(min_games=1, delta_pp=0)) is None
+
+
+def test_judge_move_for_black_scores_black_wins():
+    board = chess.Board()  # White to reply
+    e4 = stats(board, "e4", 100, 100, 300)  # Black scores 70% over 500 games
+    d4 = stats(board, "d4", 200, 100, 200)  # 50%
+    verdict = oi.judge_move(position(board, [e4, d4]), params(color=chess.BLACK, delta_pp=0))
+    assert verdict.score == pytest.approx(0.6)
+    assert verdict.best_reply.san == "d4" and verdict.best_reply_score == pytest.approx(0.5)
+    assert 0.03 < verdict.challenge < 0.06
+
+
+def test_a_forced_move_is_not_challenging_however_bad_the_alternatives_were():
+    """A recapture played in 99.9% of games used to get an 'edge' of +30 for beating the 0.1%
+    who blundered. Judged by what follows it, every reply scores about the same: nobody is
+    going wrong, so there is no challenge."""
+    board = chess.Board()
+    board.push_san("e4")
+    after = position(
+        board,
+        [
+            stats(board, "Nc6", 1612, 800, 1588),  # White 50.3% over 4,000 games
+            stats(board, "Nf6", 1290, 600, 1110),  # 53.0% over 3,000
+            stats(board, "d5", 1288, 600, 1112),  # 52.9% over 3,000
+        ],
+    )  # 51.9% over 10,000 games
+    assert oi.judge_move(after, params(delta_pp=1)) is None
 
 
 # ── the crawl ─────────────────────────────────────────────────────────────────
@@ -149,20 +146,30 @@ class FakeClient:
 
 
 def build_tree():
-    """Start: e4 (good for White) and d4. After e4: c5 and e5 (e5 explored, c5 pruned)."""
+    """A tree for White in which only 1.e4 e5 2.Nf3 is challenging: Black's reliable reply
+    Nf6 holds White to 40%, but three quarters of opponents play Nc6 and score badly. After
+    e4, d4 and Bc4 the replies all score about the same."""
     tree = {}
     start = chess.Board()
-    e4, d4 = stats(start, "e4", 700, 200, 100), stats(start, "d4", 400, 200, 400)
+    e4, d4 = stats(start, "e4", 450, 200, 350), stats(start, "d4", 400, 200, 400)
     tree[start.epd()] = position(start, [e4, d4])
     after_e4 = chess.Board()
     after_e4.push_san("e4")
-    e5, c5 = stats(after_e4, "e5", 300, 100, 200), stats(after_e4, "c5", 5, 0, 5)
+    e5, c5 = stats(after_e4, "e5", 300, 100, 200), stats(after_e4, "c5", 150, 100, 150)
     tree[after_e4.epd()] = position(after_e4, [e5, c5])
     after_e4e5 = after_e4.copy()
     after_e4e5.push_san("e5")
-    nf3 = stats(after_e4e5, "Nf3", 250, 100, 50)  # 75% vs baseline of the rest
-    bc4 = stats(after_e4e5, "Bc4", 100, 50, 150)
+    nf3 = stats(after_e4e5, "Nf3", 1800, 700, 1500)
+    bc4 = stats(after_e4e5, "Bc4", 100, 100, 100)
     tree[after_e4e5.epd()] = position(after_e4e5, [nf3, bc4])
+    after_nf3 = after_e4e5.copy()
+    after_nf3.push_san("Nf3")
+    nc6 = stats(after_nf3, "Nc6", 1500, 500, 1000)  # White scores 58.3% over 3000
+    nf6 = stats(after_nf3, "Nf6", 300, 200, 500)  # 40% over 1000
+    tree[after_nf3.epd()] = position(after_nf3, [nc6, nf6])  # 53.75% over 4000
+    after_bc4 = after_e4e5.copy()
+    after_bc4.push_san("Bc4")
+    tree[after_bc4.epd()] = position(after_bc4, [stats(after_bc4, "Nf6", 100, 100, 100)])
     after_d4 = chess.Board()
     after_d4.push_san("d4")
     tree[after_d4.epd()] = position(after_d4, [stats(after_d4, "d5", 400, 200, 400)])
@@ -194,29 +201,28 @@ class Harness:
         raise AssertionError("worker did not finish")
 
 
-def test_crawl_flags_only_our_moves_prunes_and_visits_each_position_once():
+def test_crawl_judges_only_our_moves_prunes_and_visits_each_position_once():
     tree, after_e4, after_e4e5 = build_tree()
     client = FakeClient(tree)
     h = Harness(client)
     run_id = h.run(params(min_games=20, delta_pp=5, top_n=1))
     summary = h.finished[0]
     assert summary.run_id == run_id and not summary.stopped and summary.error is None
-    flagged = {(nm.san, nm.line) for _rid, nm in h.results}
-    e4 = chess.Move.from_uci("e2e4")
-    e5 = chess.Move.from_uci("e7e5")
-    assert ("e4", ()) in flagged
-    assert ("Nf3", (e4, e5)) in flagged
-    assert all(nm.san != "e5" for _r, nm in h.results)  # Black's move is never flagged for White
-    # c5 (10 games) is below min_games so its position is not explored; e5 is the top-1 reply.
-    assert after_e4.epd() in client.requests
-    assert after_e4e5.epd() in client.requests
+    e4, e5 = chess.Move.from_uci("e2e4"), chess.Move.from_uci("e7e5")
+    # Only Nf3 is challenging; e4 and d4 are judged but not listed; Black's moves never are.
+    assert [(nm.san, nm.line) for _rid, nm in h.results] == [("Nf3", (e4, e5))]
+    assert summary.found == 1
+    # e5 is the top-1 reply after e4, so c5's position is not explored.
+    assert after_e4.epd() in client.requests and after_e4e5.epd() in client.requests
     assert len(client.requests) == len(set(client.requests))  # each position fetched once
     assert all(rid == run_id for rid, _ in h.results)
-    nm = next(nm for _r, nm in h.results if nm.san == "Nf3")
+    nm = h.results[0][1]
     assert nm.position_moves == (e4, e5)
-    assert nm.popularity_rank == 1 and nm.games == 400
-    assert nm.position_games == 700  # Nf3 400 + Bc4 300
-    assert nm.play_pct == pytest.approx(400 / 700 * 100)
+    assert nm.games == 4000 and nm.position_games == 4300 and nm.popularity_rank == 1
+    assert nm.play_pct == pytest.approx(4000 / 4300 * 100)
+    assert nm.score_pct == pytest.approx(53.75, abs=0.06) and nm.score_games == 4000
+    assert nm.best_reply_san == "Nf6" and nm.best_reply_share == 25.0
+    assert nm.best_reply_pct == 40.0 and nm.challenge_pp == pytest.approx(10.3, abs=0.1)
 
 
 def test_prefix_moves_are_carried_and_run_starts_from_the_given_board():
@@ -226,6 +232,7 @@ def test_prefix_moves_are_carried_and_run_starts_from_the_given_board():
     prefix = (chess.Move.from_uci("e2e4"),)
     h.run(params(min_games=20), start=after_e4, prefix=prefix)
     assert client.requests[0] == after_e4.epd()
+    assert [nm.san for _rid, nm in h.results] == ["Nf3"]
     for _rid, nm in h.results:
         assert nm.prefix_moves == prefix
         assert nm.root_fen == chess.STARTING_FEN

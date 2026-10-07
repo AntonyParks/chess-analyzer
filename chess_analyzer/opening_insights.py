@@ -1,8 +1,12 @@
-"""Opening Insights: walk the Lichess opening tree and flag moves that score unusually well.
+"""Opening Insights: walk the Lichess opening tree and flag *challenging* moves.
 
-A move is *notable* when the Wilson 95 % lower bound of its score rate (wins + ½ draws, for
-the chosen colour) beats the score rate of the other games in the same position by at least
-the requested margin — so a move needs both a good record and enough games to trust it.
+A move for the chosen colour is *notable* when opponents, on average, do markedly worse after
+it than their most reliable reply would achieve. The move is judged from the position after
+it: each reply's score is compared with the position's overall score (Wilson intervals on
+both sides, so neither a few lucky games nor a rarely tried reply can decide it); the reply
+that reliably holds the chosen colour's score down most is the *best reply*, and the average
+opponent's shortfall against it is the move's *challenge*. A large challenge means opponents
+usually go wrong after the move — whatever the engine thinks of it.
 """
 
 from __future__ import annotations
@@ -36,10 +40,10 @@ MAX_MOVES_PER_POSITION = 20  # asked of the server; its own cap may be lower
 @dataclass(frozen=True)
 class InsightsParams:
     color: chess.Color
-    min_pct: int  # explore a reply only if it has ≥ min_pct % of the position's games
-    min_games: int  # games a move needs before it can be flagged or explored
+    min_pct: int  # examine a move only if it has ≥ min_pct % of its position's games
+    min_games: int  # games a move needs before it is judged or its position explored
     top_n: int  # opponent replies to explore per position (0 = all returned)
-    delta_pp: float  # required edge of the lower bound over the baseline, in points
+    delta_pp: float  # the smallest challenge (in points) a move needs to be listed
     query: ExplorerQuery
     max_positions: int = 300
     max_depth: int = 24
@@ -54,13 +58,15 @@ class NotableMove:
     line: tuple[chess.Move, ...]  # from there to the position before the move
     move: chess.Move
     san: str
-    games: int
-    position_games: int  # all games played from this position, whatever the move
-    score_pct: float  # (wins + ½ draws) / games, in %
-    lower_pct: float  # Wilson 95 % lower bound, in %
-    baseline_pct: float  # score rate of the other games in the position, in %
-    edge_pp: float  # 95 % lower bound of (score - baseline), in points; see evaluate_move
-    popularity_rank: int  # 1 = most played move here
+    games: int  # games in which the move was played from its position
+    position_games: int  # all games played from that position, whatever the move
+    score_pct: float  # the chosen colour's score rate (wins + ½ draws) after the move, in %
+    score_games: int  # games that rate is taken over: those reaching the position after it
+    best_reply_san: str  # the opponent's most reliable reply
+    best_reply_share: float  # how often it is played after the move, in %
+    best_reply_pct: float  # the chosen colour's score rate after it, in %
+    challenge_pp: float  # 95 % lower bound of (score_pct - best_reply_pct); see judge_move
+    popularity_rank: int  # 1 = most played move in its position
 
     @property
     def position_moves(self) -> tuple[chess.Move, ...]:
@@ -71,11 +77,6 @@ class NotableMove:
     def play_pct(self) -> float:
         """How often the move is chosen here: its share of the position's games, in %."""
         return 100 * self.games / self.position_games if self.position_games else 0.0
-
-    @property
-    def other_games(self) -> int:
-        """Games from the position in which a different move was played (the baseline)."""
-        return self.position_games - self.games
 
 
 @dataclass(frozen=True)
@@ -114,42 +115,62 @@ def score_points(white: int, draws: int, black: int, color: chess.Color) -> floa
 
 @dataclass(frozen=True)
 class Verdict:
-    """A notable move's statistics, as fractions."""
+    """How challenging a move is, judged from the position after it (fractions)."""
 
-    score: float  # (wins + ½ draws) / games
-    lower: float  # Wilson 95 % lower bound of ``score``
-    baseline: float  # score rate of the other games played from the position
-    edge: float  # 95 % lower bound of ``score - baseline``, allowing for both sample sizes
+    score: float  # the chosen colour's score rate over the games reaching the position
+    games: int
+    best_reply: MoveStats  # the opponent's most reliable reply
+    best_reply_score: float  # the chosen colour's score rate after it
+    challenge: float  # 95 % lower bound of ``score - best_reply_score``
 
 
-def evaluate_move(
-    stats: MoveStats, position: ExplorerResult, params: InsightsParams
-) -> Verdict | None:
-    """The move's statistics if it is notable, else None.
+def judge_move(after: ExplorerResult, params: InsightsParams) -> Verdict | None:
+    """Judge the move that led to ``after`` (the opponent to move); None unless notable.
 
-    A move is notable when it beats the other games played from the same position by at
-    least ``delta_pp`` points *with 95 % confidence*. The confidence interval around the gap
-    is Newcombe's hybrid score interval, built from the Wilson intervals of both sides, so
-    the edge shrinks when either sample is small: neither a lucky record over a few games
-    nor a baseline made of a handful of stray games (common deep in the tree) can produce a
-    large edge.
+    The challenge is how far short of their best reply opponents fall on average. For each
+    reply, the gap between the position's overall score and the score after that reply gets
+    Newcombe's hybrid score interval (from the Wilson intervals of both sides); the reply
+    with the largest lower bound is the *best reply* and that bound is the challenge — so a
+    rarely tried reply with a lucky record, whose interval is wide, cannot decide it. Replies
+    below ``min_pct`` of the games are not considered unless none qualifies. The move is
+    notable when the challenge reaches ``delta_pp``.
     """
-    n = stats.total
+    n = after.total
     if n <= 0 or n < params.min_games:
         return None
-    points = score_points(stats.white, stats.draws, stats.black, params.color)
-    rest_n = position.total - n
-    if rest_n <= 0:
+    played = [r for r in after.moves if r.total > 0]
+    if not played:
         return None
-    rest_points = score_points(position.white, position.draws, position.black, params.color)
-    rest_points -= points
-    score, baseline = points / n, rest_points / rest_n
+    threshold = params.min_pct / 100 * n
+    replies = [r for r in played if r.total >= threshold] or [max(played, key=lambda r: r.total)]
+    points = score_points(after.white, after.draws, after.black, params.color)
+    score = points / n
     lower, _ = wilson_bounds(points, n)
-    _, upper = wilson_bounds(rest_points, rest_n)
-    edge = (score - baseline) - math.sqrt((score - lower) ** 2 + (upper - baseline) ** 2)
-    if edge * 100 < params.delta_pp:
+    best: tuple[float, MoveStats, float] | None = None
+    for reply in replies:
+        r_points = score_points(reply.white, reply.draws, reply.black, params.color)
+        r_score = r_points / reply.total
+        _, r_upper = wilson_bounds(r_points, reply.total)
+        bound = (score - r_score) - math.sqrt((score - lower) ** 2 + (r_upper - r_score) ** 2)
+        if best is None or bound > best[0]:
+            best = (bound, reply, r_score)
+    challenge, reply, r_score = best
+    if challenge * 100 < params.delta_pp:
         return None
-    return Verdict(score, lower, baseline, edge)
+    return Verdict(score, n, reply, r_score, challenge)
+
+
+@dataclass(frozen=True)
+class _Entry:
+    """A position to fetch: the line to it and, when the chosen colour's move led here, that
+    move's statistics in its parent position, so it can be judged once this one is known."""
+
+    board: chess.Board
+    line: tuple[chess.Move, ...]
+    depth: int
+    via: MoveStats | None = None
+    parent_total: int = 0  # games played from the parent position
+    parent_rank: int = 0  # the move's popularity rank there (1 = most played)
 
 
 class InsightsWorker:
@@ -219,8 +240,7 @@ class InsightsWorker:
         on_finished: Callable[[InsightsSummary], None],
     ) -> None:
         post = self._dispatcher.post
-        queue: deque[tuple[chess.Board, tuple[chess.Move, ...], int]] = deque()
-        queue.append((start_board, (), 0))
+        queue: deque[_Entry] = deque([_Entry(start_board, (), 0)])
         visited = {start_board.epd()}
         positions = 0
         found = 0
@@ -235,7 +255,8 @@ class InsightsWorker:
             if time.monotonic() - started > params.max_seconds:
                 post(on_progress, run_id, "Stopping: time limit reached.")
                 break
-            board, line, depth = queue.popleft()
+            entry = queue.popleft()
+            board = entry.board
 
             result = self._client.cached(board, params.query)
             if result is None:
@@ -251,7 +272,7 @@ class InsightsWorker:
                     post(on_progress, run_id, f"Rate limited; waiting {exc.retry_after:.0f} s…")
                     if stop.wait(exc.retry_after):
                         break
-                    queue.appendleft((board, line, depth))
+                    queue.appendleft(entry)
                     continue
                 except LichessUnavailable as exc:
                     log.warning("Insights: skipping a position (%s)", exc)
@@ -262,21 +283,11 @@ class InsightsWorker:
 
             positions += 1
             post(on_progress, run_id, f"Analysing… {positions} positions checked")
-            if not result.moves:
-                continue
 
-            by_games = sorted(result.moves, key=lambda m: m.total, reverse=True)
-            rank = {m.uci: i + 1 for i, m in enumerate(by_games)}
-            ours = board.turn == params.color
-            candidates = by_games
-            if not ours and params.top_n > 0:
-                candidates = by_games[: params.top_n]
-
-            if ours:
-                for stats in candidates:
-                    verdict = evaluate_move(stats, result, params)
-                    if verdict is None:
-                        continue
+            via = entry.via
+            if via is not None:  # our move led here: judge it by what opponents do next
+                verdict = judge_move(result, params)
+                if verdict is not None:
                     found += 1
                     post(
                         on_result,
@@ -284,32 +295,50 @@ class InsightsWorker:
                         NotableMove(
                             root_fen=root_fen,
                             prefix_moves=prefix_moves,
-                            line=line,
-                            move=stats.move,
-                            san=stats.san,
-                            games=stats.total,
-                            position_games=result.total,
+                            line=entry.line[:-1],
+                            move=via.move,
+                            san=via.san,
+                            games=via.total,
+                            position_games=entry.parent_total,
                             score_pct=round(100 * verdict.score, 1),
-                            lower_pct=round(100 * verdict.lower, 1),
-                            baseline_pct=round(100 * verdict.baseline, 1),
-                            edge_pp=round(100 * verdict.edge, 1),
-                            popularity_rank=rank[stats.uci],
+                            score_games=verdict.games,
+                            best_reply_san=verdict.best_reply.san,
+                            best_reply_share=round(
+                                100 * verdict.best_reply.total / verdict.games, 1
+                            ),
+                            best_reply_pct=round(100 * verdict.best_reply_score, 1),
+                            challenge_pp=round(100 * verdict.challenge, 1),
+                            popularity_rank=entry.parent_rank,
                         ),
                     )
 
-            if depth >= params.max_depth:
+            if not result.moves or entry.depth >= params.max_depth:
                 continue
+            by_games = sorted(result.moves, key=lambda m: m.total, reverse=True)
+            ours = board.turn == params.color
+            candidates = by_games
+            if not ours and params.top_n > 0:
+                candidates = by_games[: params.top_n]
             threshold = max(params.min_games, params.min_pct / 100 * result.total)
-            for stats in candidates:
+            for rank, stats in enumerate(candidates, start=1):
                 if stats.total < threshold:
                     continue
                 child = board.copy(stack=False)
                 child.push(stats.move)
                 epd = child.epd()
-                if epd in visited:
+                if epd in visited:  # a transposition: judged on the path that got there first
                     continue
                 visited.add(epd)
-                queue.append((child, line + (stats.move,), depth + 1))
+                queue.append(
+                    _Entry(
+                        child,
+                        entry.line + (stats.move,),
+                        entry.depth + 1,
+                        via=stats if ours else None,
+                        parent_total=result.total,
+                        parent_rank=rank,
+                    )
+                )
 
         post(
             on_finished,
