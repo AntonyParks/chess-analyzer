@@ -13,6 +13,9 @@ The user interface is rebuilt in Qt (PySide6); everything below the UI is unchan
 - **Settings** dialog for the Lichess token (masked) and engine options.
 - The Explorer table shows Stockfish's evaluation of each move (an **Eval** column, coloured
   like the heatmap, sortable), filled in from the analysis of the shown position.
+- The Explorer table remembers its sort separately for White-to-move and Black-to-move
+  positions (e.g. White% for your moves, Games for the replies) and switches as you step
+  through the game; both are kept across sessions.
 - Insights and Review are tabs instead of pop-up windows; the promotion chooser is drawn on
   the board; coordinates are drawn inside the squares; arrows are translucent and antialiased.
 - Window geometry, state and the recent-files list are remembered.

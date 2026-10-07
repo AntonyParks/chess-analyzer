@@ -31,6 +31,10 @@ class AppConfig:
     engine_hash_mb: int = 256
     explorer_speeds: list[str] = field(default_factory=lambda: list(DEFAULT_SPEEDS))
     explorer_ratings: list[int] = field(default_factory=lambda: list(DEFAULT_RATINGS))
+    # Explorer table sort, remembered separately for White-to-move and Black-to-move
+    # positions: [column name, "asc" | "desc"]
+    explorer_sort_white: list[str] = field(default_factory=lambda: ["Games", "desc"])
+    explorer_sort_black: list[str] = field(default_factory=lambda: ["Games", "desc"])
     flip: bool = False
     show_arrow: bool = False
     heatmap: bool = True

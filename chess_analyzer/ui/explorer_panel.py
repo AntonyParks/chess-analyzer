@@ -178,6 +178,7 @@ class ExplorerPanel(QWidget):
         self._pending: tuple[str, ExplorerQuery] | None = None
         self._blocked_until = 0.0
         self._shown: ExplorerResult | None = None
+        self._applying_sort = False  # True while we set the sort ourselves (not the user)
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(DEBOUNCE_MS)
@@ -244,6 +245,7 @@ class ExplorerPanel(QWidget):
         header = self._view.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         header.setStretchLastSection(True)
+        header.sortIndicatorChanged.connect(self._on_sort_changed)
         self._view.selectionModel().selectionChanged.connect(self._on_selection)
         self._view.doubleClicked.connect(self._on_double_click)
         layout.addWidget(self._view, 1)
@@ -268,6 +270,47 @@ class ExplorerPanel(QWidget):
         if self._active:
             self._debounce.start()
 
+    # ── Sort memory: one sort for White-to-move positions, another for Black's ──
+
+    def _sort_spec(self, turn: chess.Color) -> list[str]:
+        return (
+            self._cfg.explorer_sort_white if turn == chess.WHITE else self._cfg.explorer_sort_black
+        )
+
+    def _sort_for_turn(self, turn: chess.Color) -> tuple[int, Qt.SortOrder]:
+        spec = self._sort_spec(turn)
+        try:
+            column = COLUMNS.index(spec[0])
+            order = (
+                Qt.SortOrder.AscendingOrder if spec[1] == "asc" else Qt.SortOrder.DescendingOrder
+            )
+        except (IndexError, ValueError):
+            return GAMES_COL, Qt.SortOrder.DescendingOrder
+        return column, order
+
+    def _apply_sort_for_turn(self) -> None:
+        """Switch the table to the sort remembered for the side to move."""
+        column, order = self._sort_for_turn(self._board.board.turn)
+        header = self._view.horizontalHeader()
+        if (header.sortIndicatorSection(), header.sortIndicatorOrder()) == (column, order):
+            return
+        self._applying_sort = True
+        try:
+            self._view.sortByColumn(column, order)
+        finally:
+            self._applying_sort = False
+
+    def _on_sort_changed(self, column: int, order: Qt.SortOrder) -> None:
+        """The user clicked a header: remember it for the side to move."""
+        if self._applying_sort or not 0 <= column < len(COLUMNS):
+            return
+        spec = [COLUMNS[column], "asc" if order == Qt.SortOrder.AscendingOrder else "desc"]
+        if self._board.board.turn == chess.WHITE:
+            self._cfg.explorer_sort_white = spec
+        else:
+            self._cfg.explorer_sort_black = spec
+        self._save_config()
+
     def on_evals_updated(self) -> None:
         """Engine results for the shown position arrived: refresh the Eval column."""
         if self._shown is not None and self._shown.epd == self._board.board.epd():
@@ -291,6 +334,7 @@ class ExplorerPanel(QWidget):
         self._debounce.stop()
         if not self._active:
             return
+        self._apply_sort_for_turn()
         has_token = bool(self._cfg.lichess_token.strip())
         self._token_hint.setVisible(not has_token)
         if not has_token:

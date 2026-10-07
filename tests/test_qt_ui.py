@@ -262,3 +262,44 @@ def test_explorer_panel_fills_evals_from_the_boards_analysis(window):
     panel._populate(result)
     text = panel._model.data(panel._model.index(0, EVAL_COL), Qt.ItemDataRole.DisplayRole)
     assert text and text[0] in "+-M#"
+
+
+def test_explorer_sort_is_remembered_per_side_to_move(window):
+    from chess_analyzer.ui.explorer_panel import COLUMNS, GAMES_COL
+
+    panel = window._explorer
+    header = panel._view.horizontalHeader()
+    cfg = window._cfg
+    panel.set_active(True)  # applies the sort for White to move (default: Games desc)
+    assert (header.sortIndicatorSection(), header.sortIndicatorOrder()) == (
+        GAMES_COL,
+        Qt.SortOrder.DescendingOrder,
+    )
+    # White to move: the user sorts by White%, descending.
+    white_col = COLUMNS.index("White")
+    header.setSortIndicator(white_col, Qt.SortOrder.DescendingOrder)
+    assert cfg.explorer_sort_white == ["White", "desc"]
+    assert cfg.explorer_sort_black == ["Games", "desc"]  # untouched
+
+    # Black to move: the table switches to Black's remembered sort (still the default).
+    window._board.play_move(chess.Move.from_uci("e2e4"), animated=False)
+    panel.refresh()
+    assert header.sortIndicatorSection() == GAMES_COL
+    # ...and the user picks Eval ascending for Black.
+    header.setSortIndicator(COLUMNS.index("Eval"), Qt.SortOrder.AscendingOrder)
+    assert cfg.explorer_sort_black == ["Eval", "asc"]
+    assert cfg.explorer_sort_white == ["White", "desc"]
+
+    # Back to a White-to-move position: White's sort comes back.
+    window._board.goto(0)
+    panel.refresh()
+    assert (header.sortIndicatorSection(), header.sortIndicatorOrder()) == (
+        white_col,
+        Qt.SortOrder.DescendingOrder,
+    )
+    window._board.last()
+    panel.refresh()
+    assert (header.sortIndicatorSection(), header.sortIndicatorOrder()) == (
+        COLUMNS.index("Eval"),
+        Qt.SortOrder.AscendingOrder,
+    )
