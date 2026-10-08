@@ -86,6 +86,8 @@ class InsightsSummary:
     found: int
     stopped: bool
     error: str | None = None
+    depth: int = 0  # deepest position fetched, in plies from the start position
+    limit: str = ""  # "position limit" or "time limit" when a cap ended the run
 
 
 def wilson_bounds(successes: float, n: int, z: float = 1.96) -> tuple[float, float]:
@@ -244,16 +246,18 @@ class InsightsWorker:
         visited = {start_board.epd()}
         positions = 0
         found = 0
+        deepest = 0  # plies from the start position
+        limit = ""  # which cap ended the run, if any
         error: str | None = None
         started = time.monotonic()
         last_request = 0.0
 
         while queue and not stop.is_set():
             if positions >= params.max_positions:
-                post(on_progress, run_id, f"Stopping at {params.max_positions} positions.")
+                limit = "position limit"
                 break
             if time.monotonic() - started > params.max_seconds:
-                post(on_progress, run_id, "Stopping: time limit reached.")
+                limit = "time limit"
                 break
             entry = queue.popleft()
             board = entry.board
@@ -282,7 +286,8 @@ class InsightsWorker:
                     last_request = time.monotonic()
 
             positions += 1
-            post(on_progress, run_id, f"Analysing… {positions} positions checked")
+            deepest = max(deepest, entry.depth)
+            post(on_progress, run_id, f"Analysing… {positions} positions, {deepest} plies deep")
 
             via = entry.via
             if via is not None:  # our move led here: judge it by what opponents do next
@@ -342,5 +347,13 @@ class InsightsWorker:
 
         post(
             on_finished,
-            InsightsSummary(run_id, positions, found, stopped=stop.is_set(), error=error),
+            InsightsSummary(
+                run_id,
+                positions,
+                found,
+                stopped=stop.is_set(),
+                error=error,
+                depth=deepest,
+                limit=limit,
+            ),
         )

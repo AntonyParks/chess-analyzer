@@ -212,6 +212,8 @@ def test_crawl_judges_only_our_moves_prunes_and_visits_each_position_once():
     # Only Nf3 is challenging; e4 and d4 are judged but not listed; Black's moves never are.
     assert [(nm.san, nm.line) for _rid, nm in h.results] == [("Nf3", (e4, e5))]
     assert summary.found == 1
+    assert summary.depth == 4 and summary.limit == ""  # down to the (empty) replies to Nf3/Bc4
+    assert h.progress[-1][1].endswith("positions, 4 plies deep")
     # e5 is the top-1 reply after e4, so c5's position is not explored.
     assert after_e4.epd() in client.requests and after_e4e5.epd() in client.requests
     assert len(client.requests) == len(set(client.requests))  # each position fetched once
@@ -243,9 +245,11 @@ def test_caps_limit_the_crawl():
     h = Harness(FakeClient(tree))
     h.run(params(min_games=1, max_positions=1))
     assert h.finished[0].positions == 1
+    assert h.finished[0].limit == "position limit" and h.finished[0].depth == 0
     h2 = Harness(FakeClient(tree))
     h2.run(params(min_games=1, max_depth=0))
     assert h2.finished[0].positions == 1  # root only
+    assert h2.finished[0].limit == "" and h2.finished[0].depth == 0  # ran out of tree, not budget
 
 
 def test_stop_reports_stopped_and_sends_no_late_results():

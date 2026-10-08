@@ -334,6 +334,24 @@ def test_insights_eval_column_is_filled_by_the_engine_in_the_background(window):
     assert len(model) == 1
 
 
+def test_insights_exposes_max_positions_and_reports_the_depth_reached(window):
+    from chess_analyzer.opening_insights import InsightsSummary
+
+    panel = window._insights
+    panel._max_positions.setValue(50)
+    p = panel._params()
+    assert p.max_positions == 50 and p.max_seconds == 900.0
+    panel._max_positions.setValue(2000)
+    assert panel._params().max_seconds == 4000.0  # the time cap grows with the budget
+    panel._run_id = 3
+    panel._on_finished(InsightsSummary(3, 300, 0, stopped=False, depth=5, limit="position limit"))
+    assert panel._status.text() == (
+        "Done — position limit reached. 300 positions checked, 5 plies deep, 0 notable moves."
+    )
+    panel._on_finished(InsightsSummary(3, 40, 0, stopped=True, depth=2))
+    assert panel._status.text().startswith("Stopped. 40 positions checked, 2 plies deep")
+
+
 def test_explorer_panel_fills_evals_from_the_boards_analysis(window):
     from chess_analyzer.lichess_api import ExplorerResult, MoveStats
     from chess_analyzer.ui.explorer_panel import EVAL_COL

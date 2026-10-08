@@ -66,7 +66,11 @@ HELP = (
     "<b>Min games</b> — games a move needs before it is judged.<br>"
     "<b>Min %</b> — share of its position's games a move needs before it is examined (as "
     "your move, or as a candidate best reply).<br>"
-    "<b>Top N</b> — how many of the opponent's most popular replies are followed (0 = all)."
+    "<b>Top N</b> — how many of the opponent's most popular replies are followed (0 = all).<br>"
+    "<b>Max positions</b> — how many positions the search may fetch (one per second). It "
+    "works breadth-first, so this budget also sets how deep it gets; the status line "
+    "reports the depth reached. Top N = 1 or a higher Min % narrows the tree and goes "
+    "deeper for the same budget."
 )
 
 
@@ -282,6 +286,14 @@ class InsightsPanel(QWidget):
         self._top_n.setRange(0, 20)
         self._top_n.setValue(3)
         self._top_n.setSpecialValueText("all")
+        self._max_positions = QSpinBox()
+        self._max_positions.setRange(10, 5000)
+        self._max_positions.setSingleStep(50)
+        self._max_positions.setValue(300)
+        self._max_positions.setToolTip(
+            "Positions to fetch, one per second. The search is breadth-first, so this budget "
+            "also decides how deep it gets."
+        )
         for col, (label, widget) in enumerate(
             (
                 ("Colour", self._colour),
@@ -289,6 +301,7 @@ class InsightsPanel(QWidget):
                 ("Delta", self._delta),
                 ("Min %", self._min_pct),
                 ("Top N", self._top_n),
+                ("Max positions", self._max_positions),
             )
         ):
             grid.addWidget(QLabel(label), 0, col)
@@ -378,6 +391,9 @@ class InsightsPanel(QWidget):
             top_n=self._top_n.value(),
             delta_pp=self._delta.value(),
             query=ExplorerQuery(speeds=speeds, ratings=ratings, moves=MAX_MOVES_PER_POSITION),
+            max_positions=self._max_positions.value(),
+            # One request per second plus rate-limit waits: let the time cap grow with the budget.
+            max_seconds=max(900.0, 2.0 * self._max_positions.value()),
         )
 
     def _start(self) -> None:
@@ -434,11 +450,17 @@ class InsightsPanel(QWidget):
         plural = "" if found == 1 else "s"
         if summary.error:
             self._status.setText(summary.error)
+            return
+        if summary.stopped:
+            verb = "Stopped"
+        elif summary.limit:
+            verb = f"Done — {summary.limit} reached"
         else:
-            verb = "Stopped" if summary.stopped else "Done"
-            self._status.setText(
-                f"{verb}. {summary.positions} positions checked, {found} notable move{plural}."
-            )
+            verb = "Done"
+        self._status.setText(
+            f"{verb}. {summary.positions} positions checked, {summary.depth} plies deep, "
+            f"{found} notable move{plural}."
+        )
 
     # ── Engine evaluations ────────────────────────────────────────────────────
 

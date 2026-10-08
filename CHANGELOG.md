@@ -22,6 +22,8 @@ The user interface is rebuilt in Qt (PySide6); everything below the UI is unchan
 - The Insights table has an **Eval** column: Stockfish's evaluation of the position after
   each listed move, computed in the background at the lowest priority (behind hovering, the
   heatmap and Analyze Game — a new `IDLE` request kind in the engine scheduler).
+- Insights has a **Max positions** control (the search budget, one position per second) and
+  reports how many plies deep it got, and which limit stopped it, in the status line.
 - Insights and Review are tabs instead of pop-up windows; the promotion chooser is drawn on
   the board; coordinates are drawn inside the squares; arrows are translucent and antialiased.
 - Window geometry, state and the recent-files list are remembered.

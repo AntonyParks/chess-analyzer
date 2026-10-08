@@ -110,8 +110,10 @@ side, so the **Eval** column shows Stockfish's verdict separately (filled in whe
 engine is otherwise idle) and **Best reply** shows what a well-prepared opponent would play.
 **Played** shows how often each listed move is actually chosen from its position, so an
 obscure sideline is easy to skip or sort to the bottom. **Min games** sets the minimum sample,
-**Min %** and **Top N** limit how deep and wide the search goes. Select a row to replay the
-line on the board; the move is drawn as a purple arrow.
+**Min %** and **Top N** narrow the tree, and **Max positions** caps how many positions are
+fetched (one per second) — the search is breadth-first, so that budget also decides how deep
+it gets, and the status line reports the depth reached. Select a row to replay the line on
+the board; the move is drawn as a purple arrow.
 
 ## Keyboard and mouse
 
