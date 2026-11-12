@@ -22,7 +22,6 @@ MIN_DEPTH = 5
 MAX_DEPTH = 25
 PUZZLE_MIN_DEPTH = 6
 PUZZLE_MAX_DEPTH = 22
-PUZZLE_MAX_GAMES = 500
 PUZZLE_ANY_LOOKAHEAD = 13  # the lookahead slider's "any depth" position
 
 
@@ -49,7 +48,6 @@ class AppConfig:
     recent_pgns: list[str] = field(default_factory=list)
     # Puzzles from the user's chess.com games
     chesscom_username: str = ""
-    puzzle_games: int = 50
     puzzle_time_classes: list[str] = field(
         default_factory=lambda: ["bullet", "blitz", "rapid", "daily"]
     )
@@ -98,7 +96,6 @@ def from_dict(raw: dict[str, Any]) -> AppConfig:
         setattr(cfg, key, coerced)
     cfg.depth = max(MIN_DEPTH, min(MAX_DEPTH, cfg.depth))
     cfg.puzzle_depth = max(PUZZLE_MIN_DEPTH, min(PUZZLE_MAX_DEPTH, cfg.puzzle_depth))
-    cfg.puzzle_games = max(1, min(PUZZLE_MAX_GAMES, cfg.puzzle_games))
     cfg.puzzle_lookahead = max(1, min(PUZZLE_ANY_LOOKAHEAD, cfg.puzzle_lookahead))
     if cfg.puzzle_mode not in ("all", "unsolved", "failed"):
         cfg.puzzle_mode = "unsolved"

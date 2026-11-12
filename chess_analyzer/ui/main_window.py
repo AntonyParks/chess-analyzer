@@ -34,6 +34,7 @@ from .. import __version__, board_image, config, paths, sound
 from ..engine_setup import ensure_engine
 from ..engine_worker import EngineWorker
 from ..game_analysis import GameAnalysisRunner, build_review
+from ..game_library import GameLibrary
 from ..game_state import GameState
 from ..lichess_api import LichessClient
 from ..opening_insights import InsightsWorker
@@ -93,6 +94,7 @@ class MainWindow(QMainWindow):
         self._lichess = LichessClient(lambda: self._cfg.lichess_token)
         self._insights_worker = InsightsWorker(self._lichess, self._dispatcher)
         self._puzzle_store = PuzzleStore(paths.puzzles_path(self._data_dir))
+        self._game_library = GameLibrary(paths.games_path(self._data_dir))
         self._puzzle_active = False
         self._saved_state: GameState | None = None  # the user's game while a puzzle is up
 
@@ -207,6 +209,7 @@ class MainWindow(QMainWindow):
         self._puzzles = PuzzlesPanel(
             cfg=self._cfg,
             store=self._puzzle_store,
+            library=self._game_library,
             board=self._board,
             dispatcher=self._dispatcher,
             save_config=self._save_config,

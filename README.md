@@ -41,11 +41,15 @@ continuations.*
 
 ## Puzzles from your games
 
-Open the **Puzzles** tab (F7), enter your chess.com username, choose how many recent games
-and which time controls, and press **Scan games**. The scan runs in the background at the
-lowest engine priority (roughly 5–15 s a game at the default depth 12) and keeps what it has
-found if you stop it; games already scanned are skipped next time. Games come from chess.com's
-public API, so no login is needed.
+Open the **Puzzles** tab (F7), enter your chess.com username, tick the time controls and
+press **Download & scan all games**. The first run downloads your whole chess.com history
+(public API, no login) into `chesscom_games.json` in the data directory and scans it in the
+background at the lowest engine priority, newest games first (roughly 5–15 s a game at the
+default depth 12, so a few hundred games take the better part of an hour). Stop whenever you
+like: downloaded games and puzzles found are kept, and the next run carries on. After that the
+button reads **Refresh**: it fetches only months that can still change (the current one and
+any new ones; past months are stored as final) and scans only games not scanned yet. Raising
+the depth rescans games at the new depth.
 
 Every move of yours that gave up at least 0.10 winning chances (the same scale as the review's
 `?!` / `?` / `??` marks: 0.10 / 0.20 / 0.30, about 5 / 10 / 15 points of win probability)
@@ -187,7 +191,8 @@ libraries must be installed — see `.github/workflows/ci.yml`). Layout:
 | `engine_worker.py`, `engine_setup.py` | Stockfish process and scheduling; finding/downloading the engine |
 | `evaluation.py`, `move_explain.py` | score formatting/ranking; plain-English move notes |
 | `lichess_api.py`, `opening_insights.py` | Lichess client; the Insights crawl and statistics |
-| `chesscom_api.py`, `puzzles.py`, `puzzle_scan.py` | chess.com game download; the puzzle model, answer rules and store; the mistake scanner |
+| `chesscom_api.py`, `game_library.py` | chess.com API client; the downloaded games, kept on disk and refreshed month by month |
+| `puzzles.py`, `puzzle_scan.py` | the puzzle model, answer rules and store; the mistake scanner |
 | `board_image.py`, `pieces.py`, `theme.py` | Save Image rendering, piece images, the colour palette |
 
 ## Dependencies and credits

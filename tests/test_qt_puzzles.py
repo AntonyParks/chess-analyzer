@@ -214,3 +214,68 @@ def test_filters_drive_the_counts(window):
     panel._marker_boxes["??"].setChecked(False)
     assert panel._count.text() == "0 puzzles" and not panel._start_btn.isEnabled()
     assert window._cfg.puzzle_markers == ["?", "?!"]
+
+
+def test_download_scan_then_refresh_fetches_only_new_months(window):
+    import io
+    import json
+    from datetime import UTC, datetime
+
+    from chess_analyzer.chesscom_api import ChessComClient
+
+    now = datetime.now(UTC)
+    root = "https://api.chess.com/pub/player/me/games"
+    old, current = f"{root}/2020/01", f"{root}/{now.year}/{now.month:02d}"
+
+    def game(url, end):
+        return {
+            "url": url,
+            "pgn": "1. e4 e5 2. Nf3 Nc6 *",
+            "end_time": end,
+            "time_class": "blitz",
+            "rules": "chess",
+            "white": {"username": "Me", "rating": 1200, "result": "win"},
+            "black": {"username": "opp", "rating": 1200, "result": "resigned"},
+        }
+
+    months = {old: [game("g1", 1)], current: [game("g2", 2)]}
+    seen = []
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def opener(request, timeout):
+        seen.append(request.full_url)
+        if request.full_url.endswith("/archives"):
+            return Response(json.dumps({"archives": list(months)}).encode())
+        return Response(json.dumps({"games": months[request.full_url]}).encode())
+
+    panel = window._puzzles
+    panel._client = ChessComClient(opener=opener)
+    window._tabs.setCurrentIndex(TAB_PUZZLES)
+    panel._username.setText("Me")
+    assert panel._scan_btn.text() == "Download & scan all games"
+    panel._scan()
+    assert wait_until(
+        lambda: not panel.scanning and "Done" in panel._scan_status.text(), timeout=10
+    )
+    assert panel._scan_btn.text() == "Refresh"
+    assert "2 games downloaded · 2 scanned" in panel._library_status.text()
+    assert (window._data_dir / "chesscom_games.json").exists()
+
+    seen.clear()
+    months[current].append(game("g3", 3))
+    panel._scan()
+    assert wait_until(
+        lambda: not panel.scanning and "Done" in panel._scan_status.text(), timeout=10
+    )
+    assert seen == [f"{root.rsplit('/games', 1)[0]}/games/archives", current]  # 2020/01 is final
+    assert "1 new game downloaded" in panel._scan_status.text()
+    assert "3 games downloaded · 3 scanned" in panel._library_status.text()
+
+    panel._scan()
+    assert wait_until(lambda: not panel.scanning and "Up to date" in panel._scan_status.text())

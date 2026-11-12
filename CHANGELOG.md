@@ -10,6 +10,9 @@
   shows within N moves), multi-move lines while the engine line stays forcing, near-best
   answers accepted, hints, solutions, and a **Retry failed** mode. Results persist in
   `puzzles.json`; scanned games are not scanned again.
+- Puzzles work from a local library of all your chess.com games (`chesscom_games.json`):
+  the first run downloads and scans your whole history; **Refresh** then fetches only the
+  current month and new months and scans only unscanned games.
 - The board has a puzzle mode (no engine requests or scores, user moves checked before they
   are played) and can swap in a separate game state, so puzzles never disturb the loaded
   game or its analysis.

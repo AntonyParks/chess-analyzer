@@ -64,6 +64,11 @@ def puzzles_path(base: Path | None = None) -> Path:
     return (base or user_data_dir()) / "puzzles.json"
 
 
+def games_path(base: Path | None = None) -> Path:
+    """The downloaded chess.com games (see ``game_library``)."""
+    return (base or user_data_dir()) / "chesscom_games.json"
+
+
 def logs_dir(base: Path | None = None) -> Path:
     return (base or user_data_dir()) / "logs"
 

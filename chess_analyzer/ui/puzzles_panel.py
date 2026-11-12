@@ -31,8 +31,15 @@ from PySide6.QtWidgets import (
 )
 
 from .. import config, move_explain, theme
-from ..chesscom_api import TIME_CLASS_LABELS, TIME_CLASSES, ChessComClient, ChessComError
+from ..chesscom_api import (
+    TIME_CLASS_LABELS,
+    TIME_CLASSES,
+    ChessComClient,
+    ChessComError,
+    ChessComGame,
+)
 from ..engine_worker import EngineWorker
+from ..game_library import ArchiveUpdate, GameLibrary, fetch_updates
 from ..puzzle_scan import PuzzleScanner, estimate_seconds, format_duration
 from ..puzzles import (
     MARKER_LABELS,
@@ -72,6 +79,7 @@ class PuzzlesPanel(QWidget):
         *,
         cfg: config.AppConfig,
         store: PuzzleStore,
+        library: GameLibrary,
         board: BoardWidget,
         dispatcher: Dispatcher,
         save_config: Callable[[], None],
@@ -82,6 +90,7 @@ class PuzzlesPanel(QWidget):
         super().__init__(parent)
         self._cfg = cfg
         self._store = store
+        self._library = library
         self._board = board
         self._dispatcher = dispatcher
         self._save_config = save_config
@@ -91,7 +100,7 @@ class PuzzlesPanel(QWidget):
         self._fetch_run = 0
         self._fetch_stop: threading.Event | None = None
         self._fetching = False
-        self._fetched = 0  # games the last fetch returned (some may be scanned already)
+        self._new_games = 0  # games the last refresh added to the library
 
         # The open puzzle
         self._queue: list[str] = []
@@ -112,7 +121,7 @@ class PuzzlesPanel(QWidget):
         layout.addWidget(self._build_practice_box())
         layout.addWidget(self._build_puzzle_box(), 1)
         self._refresh_counts()
-        self._update_estimate()
+        self._update_library_status()
         self._set_scanning(False)
         self._show_idle()
 
@@ -124,19 +133,15 @@ class PuzzlesPanel(QWidget):
         grid.setHorizontalSpacing(8)
         self._username = QLineEdit(self._cfg.chesscom_username)
         self._username.setPlaceholderText("chess.com username")
-        self._games = QSpinBox()
-        self._games.setRange(1, config.PUZZLE_MAX_GAMES)
-        self._games.setValue(self._cfg.puzzle_games)
-        self._games.setToolTip("How many of your most recent games to scan")
         self._depth = QSpinBox()
         self._depth.setRange(config.PUZZLE_MIN_DEPTH, config.PUZZLE_MAX_DEPTH)
         self._depth.setValue(self._cfg.puzzle_depth)
         self._depth.setToolTip(
             "Engine depth used to decide what was a mistake and which answers are right. "
-            "Deeper is more reliable and slower."
+            "Deeper is more reliable and slower; games are rescanned when you raise it."
         )
         for col, (label, widget) in enumerate(
-            (("Username", self._username), ("Recent games", self._games), ("Depth", self._depth))
+            (("Username", self._username), ("Depth", self._depth))
         ):
             grid.addWidget(QLabel(label), 0, col)
             grid.addWidget(widget, 1, col)
@@ -151,26 +156,32 @@ class PuzzlesPanel(QWidget):
             self._class_boxes[time_class] = check
             classes.addWidget(check)
         classes.addStretch(1)
-        grid.addLayout(classes, 2, 0, 1, 3)
+        grid.addLayout(classes, 2, 0, 1, 2)
 
         buttons = QHBoxLayout()
-        self._scan_btn = QPushButton("Scan games")
+        self._scan_btn = QPushButton("Download & scan all games")
         self._scan_btn.setProperty("accent", True)
+        self._scan_btn.setToolTip(
+            "The first time, downloads your whole chess.com history and scans it. Afterwards "
+            "it only downloads new games and scans what has not been scanned yet."
+        )
         self._scan_btn.clicked.connect(self._scan)
         self._stop_btn = QPushButton("Stop")
+        self._stop_btn.setToolTip("Stop now; downloaded games and puzzles found are kept")
         self._stop_btn.clicked.connect(self._stop_scan)
-        self._estimate = QLabel("")
-        set_role(self._estimate, "faint")
         buttons.addWidget(self._scan_btn)
         buttons.addWidget(self._stop_btn)
-        buttons.addWidget(self._estimate, 1)
-        grid.addLayout(buttons, 3, 0, 1, 3)
+        buttons.addStretch(1)
+        grid.addLayout(buttons, 3, 0, 1, 2)
+        self._library_status = QLabel("")
+        self._library_status.setWordWrap(True)
+        set_role(self._library_status, "faint")
+        grid.addWidget(self._library_status, 4, 0, 1, 2)
         self._scan_status = QLabel("")
         self._scan_status.setWordWrap(True)
-        grid.addWidget(self._scan_status, 4, 0, 1, 3)
+        grid.addWidget(self._scan_status, 5, 0, 1, 2)
 
         self._username.editingFinished.connect(self._on_scan_settings)
-        self._games.valueChanged.connect(self._on_scan_settings)
         self._depth.valueChanged.connect(self._on_scan_settings)
         return box
 
@@ -289,29 +300,52 @@ class PuzzlesPanel(QWidget):
         self._awaiting_reply = False
         self._show_idle()
 
-    # ── Scanning ──────────────────────────────────────────────────────────────
+    # ── Downloading and scanning ──────────────────────────────────────────────
 
     def _selected_classes(self) -> list[str]:
         return [c for c, box in self._class_boxes.items() if box.isChecked()]
 
     def _on_scan_settings(self, *_args: object) -> None:
         self._cfg.chesscom_username = self._username.text().strip()
-        self._cfg.puzzle_games = self._games.value()
         self._cfg.puzzle_depth = self._depth.value()
         self._cfg.puzzle_time_classes = self._selected_classes()
         self._save_config()
-        self._update_estimate()
+        self._update_library_status()
 
-    def _update_estimate(self) -> None:
-        low, high = estimate_seconds(self._games.value(), self._depth.value())
-        self._estimate.setText(
-            f"≈ {format_duration(low)}–{format_duration(high)} for new games; "
-            "runs in the background"
+    def _unscanned(self) -> list[ChessComGame]:
+        username = self._cfg.chesscom_username
+        if not username:
+            return []
+        depth = self._depth.value()
+        games = self._library.games(username, self._selected_classes())
+        return [g for g in games if not self._store.is_analysed(g.url, depth)]
+
+    def _update_library_status(self) -> None:
+        username = self._cfg.chesscom_username
+        if not username or not self._library.has_user(username):
+            self._scan_btn.setText("Download & scan all games")
+            self._library_status.setText(
+                "The first run downloads your whole chess.com history (kept on this computer) "
+                "and scans it in the background; afterwards Refresh only fetches new games."
+            )
+            return
+        self._scan_btn.setText("Refresh")
+        games = self._library.games(username, self._selected_classes())
+        left = len(self._unscanned())
+        refreshed = self._library.last_refresh(username)
+        when = (
+            datetime.fromtimestamp(refreshed).strftime("%Y-%m-%d %H:%M") if refreshed else "never"
         )
+        text = f"{len(games)} games downloaded · {len(games) - left} scanned"
+        if left:
+            low, high = estimate_seconds(left, self._depth.value())
+            text += f" · {left} to scan (≈ {format_duration(low)}–{format_duration(high)})"
+        self._library_status.setText(f"{text} · last refreshed {when}")
 
     def _set_scanning(self, scanning: bool) -> None:
         self._scan_btn.setEnabled(not scanning and self._scanner is not None)
         self._stop_btn.setEnabled(scanning)
+        self._username.setEnabled(not scanning)
         if self._scanner is None and not scanning:
             self._scan_status.setText("Waiting for the chess engine…")
 
@@ -320,15 +354,15 @@ class PuzzlesPanel(QWidget):
         return self._fetching or (self._scanner is not None and self._scanner.running)
 
     def _scan(self) -> None:
+        """Download new games (everything, the first time), then scan what is unscanned."""
         if self._scanner is None or self.scanning:
             return
         self._on_scan_settings()
         username = self._cfg.chesscom_username
-        classes = self._selected_classes()
         if not username:
             self._scan_status.setText("Enter your chess.com username first.")
             return
-        if not classes:
+        if not self._selected_classes():
             self._scan_status.setText("Tick at least one time control.")
             return
         self._fetch_run += 1
@@ -337,43 +371,73 @@ class PuzzlesPanel(QWidget):
         self._fetch_stop = stop
         self._fetching = True
         self._set_scanning(True)
-        self._scan_status.setText(f"Fetching {username}'s games from chess.com…")
-        count = self._games.value()
+        self._scan_status.setText(f"Checking chess.com for {username}'s games…")
+        final_months = self._library.final_months(username)
+
+        def progress(done: int, total: int) -> None:
+            self._dispatcher.post(self._on_download_progress, run, done, total)
 
         def fetch() -> None:
             try:
-                games = self._client.fetch_recent_games(
-                    username, count, classes, should_stop=stop.is_set
+                update = fetch_updates(
+                    self._client,
+                    username,
+                    final_months,
+                    should_stop=stop.is_set,
+                    on_progress=progress,
                 )
             except ChessComError as exc:
                 self._dispatcher.post(self._on_fetch_failed, run, str(exc))
                 return
-            except Exception as exc:  # never leave the panel stuck in "fetching"
-                log.exception("Fetching chess.com games failed")
+            except Exception as exc:  # never leave the panel stuck in "downloading"
+                log.exception("Downloading chess.com games failed")
                 self._dispatcher.post(self._on_fetch_failed, run, f"Unexpected error: {exc}")
                 return
-            self._dispatcher.post(self._on_games, run, games)
+            self._dispatcher.post(self._on_downloaded, run, update)
 
         threading.Thread(target=fetch, daemon=True, name="chesscom-fetch").start()
+
+    def _on_download_progress(self, run: int, done: int, total: int) -> None:
+        if run == self._fetch_run and self._fetching and total:
+            self._scan_status.setText(f"Downloading month {min(done + 1, total)} of {total}…")
 
     def _on_fetch_failed(self, run: int, message: str) -> None:
         if run != self._fetch_run:
             return
         self._fetching = False
-        self._set_scanning(False)
-        self._scan_status.setText(message)
+        if self._library.has_user(self._cfg.chesscom_username):
+            self._scan_status.setText(f"{message} Scanning the games already downloaded.")
+            self._scan_library()
+        else:
+            self._set_scanning(False)
+            self._scan_status.setText(message)
 
-    def _on_games(self, run: int, games: list) -> None:
-        if run != self._fetch_run or self._scanner is None:
+    def _on_downloaded(self, run: int, update: ArchiveUpdate) -> None:
+        new = self._library.apply(update)
+        try:
+            self._library.save()
+        except OSError as exc:
+            log.warning("Could not save the game library: %s", exc)
+        if run != self._fetch_run:  # stopped while downloading: keep the months, no scan
+            self._update_library_status()
             return
         self._fetching = False
+        self._new_games = new
+        self._scan_library()
+
+    def _scan_library(self) -> None:
+        if self._scanner is None:
+            self._set_scanning(False)
+            return
+        games = self._unscanned()
+        self._update_library_status()
         if not games:
             self._set_scanning(False)
-            self._scan_status.setText("No games found for those time controls.")
+            new = f"{self._new_games} new game{'s' if self._new_games != 1 else ''}; "
+            self._scan_status.setText(f"Up to date: {new}everything is scanned.")
             return
-        self._fetched = len(games)
         self._set_scanning(True)
-        self._scanner.scan(games, self._depth.value())
+        self._scanner.scan(games, self._depth.value())  # newest first
 
     def _stop_scan(self) -> None:
         if self._fetching:
@@ -381,21 +445,20 @@ class PuzzlesPanel(QWidget):
             if self._fetch_stop is not None:
                 self._fetch_stop.set()
             self._fetching = False
-            self._scan_status.setText("Stopped.")
+            self._scan_status.setText("Stopped; the months downloaded so far are kept.")
         if self._scanner is not None and self._scanner.running:
             self._scanner.stop()
         self._set_scanning(False)
 
     def _on_scan_progress(self, done: int, total: int, found: int) -> None:
-        skipped = self._fetched - total if self._fetched else 0
-        parts = [f"Game {min(done + 1, total)}/{total}" if done < total else f"{total} games"]
+        parts = [f"Scanning game {min(done + 1, total)} of {total}" if done < total else ""]
         parts.append(f"{found} new puzzle{'s' if found != 1 else ''}")
-        if skipped > 0:
-            parts.append(f"{skipped} already scanned")
         if done < total:
             low, high = estimate_seconds(total - done, self._depth.value())
             parts.append(f"≈ {format_duration(low)}–{format_duration(high)} left")
-        self._scan_status.setText(" · ".join(parts))
+        self._scan_status.setText(" · ".join(p for p in parts if p))
+        if done:
+            self._update_library_status()
 
     def _on_puzzle_found(self, _puzzle: Puzzle) -> None:
         self._refresh_counts()
@@ -403,12 +466,12 @@ class PuzzlesPanel(QWidget):
     def _on_scan_finished(self, completed: bool, error: str | None) -> None:
         self._set_scanning(False)
         self._refresh_counts()
+        self._update_library_status()
         if error:
             self._scan_status.setText(error)
         elif completed:
-            self._scan_status.setText(
-                self._scan_status.text().split(" · ≈")[0] + " · done. Press Start to practise."
-            )
+            new = f"{self._new_games} new game{'s' if self._new_games != 1 else ''} downloaded; "
+            self._scan_status.setText(f"Done: {new}press Start to practise.")
         else:
             self._scan_status.setText("Stopped; the puzzles found so far are kept.")
 
