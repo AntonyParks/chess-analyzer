@@ -44,6 +44,7 @@ from ..puzzle_scan import PuzzleScanner, estimate_seconds, format_duration
 from ..puzzles import (
     MARKER_LABELS,
     MARKERS,
+    ORDERS,
     Puzzle,
     PuzzleFilter,
     PuzzleStep,
@@ -222,6 +223,16 @@ class PuzzlesPanel(QWidget):
             self._mode.addItem(label, mode)
         self._mode.setCurrentIndex(max(0, self._mode.findData(self._cfg.puzzle_mode)))
         self._mode.currentIndexChanged.connect(self._on_filter_changed)
+        self._order = QComboBox()
+        for order, label in ORDERS.items():
+            self._order.addItem(label, order)
+        self._order.setCurrentIndex(max(0, self._order.findData(self._cfg.puzzle_order)))
+        self._order.setToolTip(
+            "Difficulty: how far ahead you must look to see why your move was wrong, then how "
+            "many moves the line asks for, how many answers are accepted, and how big the "
+            "mistake was (bigger blunders are easier to spot)."
+        )
+        self._order.currentIndexChanged.connect(self._on_filter_changed)
         self._count = QLabel("")
         set_role(self._count, "muted")
         self._start_btn = QPushButton("Start")
@@ -229,6 +240,7 @@ class PuzzlesPanel(QWidget):
         self._start_btn.clicked.connect(self.start)
         row.addWidget(QLabel("Show"))
         row.addWidget(self._mode)
+        row.addWidget(self._order)
         row.addWidget(self._count, 1)
         row.addWidget(self._start_btn)
         layout.addLayout(row)
@@ -489,11 +501,15 @@ class PuzzlesPanel(QWidget):
         self._refresh_counts()
         self._update_buttons()
 
+    def _query(self) -> list[Puzzle]:
+        return self._store.query(self.current_filter(), str(self._order.currentData()))
+
     def _on_filter_changed(self, *_args: object) -> None:
         flt = self.current_filter()
         self._cfg.puzzle_markers = sorted(flt.markers, key=MARKERS.index)
         self._cfg.puzzle_lookahead = self._lookahead.value()
         self._cfg.puzzle_mode = flt.mode
+        self._cfg.puzzle_order = str(self._order.currentData())
         self._save_config()
         self._refresh_counts()
 
@@ -514,13 +530,13 @@ class PuzzlesPanel(QWidget):
     # ── Puzzle flow ───────────────────────────────────────────────────────────
 
     def start(self) -> None:
-        self._queue = [p.id for p in self._store.query(self.current_filter())]
+        self._queue = [p.id for p in self._query()]
         self._pos = -1
         self.next_puzzle()
 
     def next_puzzle(self) -> None:
         if not self._queue or self._pos + 1 >= len(self._queue):
-            self._queue = [p.id for p in self._store.query(self.current_filter())]
+            self._queue = [p.id for p in self._query()]
             self._pos = -1
         if not self._queue:
             self._show_idle(
@@ -737,7 +753,7 @@ class PuzzlesPanel(QWidget):
         self._hint_btn.setEnabled(playing)
         self._solution_btn.setEnabled(playing)
         self._retry_btn.setEnabled(open_)
-        self._next_btn.setEnabled(bool(self._store.query(self.current_filter())) or open_)
+        self._next_btn.setEnabled(bool(self._query()) or open_)
 
     def _show_idle(self, message: str = "") -> None:
         self._title.setText("Puzzles from your games")

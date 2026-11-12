@@ -28,6 +28,7 @@ MARKERS = ("??", "?", "?!")
 MARKER_LABELS = {"??": "Blunders ??", "?": "Mistakes ?", "?!": "Inaccuracies ?!"}
 SEVERITY = {"??": evaluation.BLUNDER, "?": evaluation.MISTAKE, "?!": evaluation.INACCURACY}
 MODES = ("all", "unsolved", "failed")
+ORDERS = {"newest": "Newest games first", "easiest": "Easiest first", "hardest": "Hardest first"}
 MAX_LOOKAHEAD = 12  # moves; the slider's top value, "any depth", is MAX_LOOKAHEAD + 1
 
 
@@ -99,6 +100,35 @@ def should_continue(scores: Mapping[str, float]) -> bool:
     return top - second >= FORCING_GAP
 
 
+def difficulty(puzzle: Puzzle, lookahead: int | None = None) -> tuple[float, ...]:
+    """Sort key, easiest first. In order of weight:
+
+    1. how far ahead you must look before the better move clearly wins (``visible_plies``);
+    2. how many moves you have to find (the line as cut by ``lookahead``);
+    3. how many answers are accepted at the first step (more = easier);
+    4. how much the mistake cost (a bigger blunder is easier to see).
+    """
+    first = puzzle.steps[0]
+    answers = sum(1 for uci in first.scores if is_acceptable(first, uci))
+    return (
+        puzzle.visible_plies,
+        len(puzzle.steps_within(lookahead)),
+        -answers,
+        -puzzle.win_drop,
+    )
+
+
+def sort_puzzles(
+    puzzles: Iterable[Puzzle], order: str = "newest", lookahead: int | None = None
+) -> list[Puzzle]:
+    """``order``: ``"newest"`` (newest game first), ``"easiest"`` or ``"hardest"``."""
+    newest = sorted(puzzles, key=lambda p: (-p.end_time, p.game_url, p.ply))
+    if order not in ("easiest", "hardest"):
+        return newest
+    # sorted() is stable, so equally hard puzzles stay newest-first either way.
+    return sorted(newest, key=lambda p: difficulty(p, lookahead), reverse=order == "hardest")
+
+
 def lookahead_value(slider: int) -> int | None:
     """Slider position (1 … MAX_LOOKAHEAD + 1) to a lookahead in moves (None = any depth)."""
     return None if slider > MAX_LOOKAHEAD else max(1, slider)
@@ -147,8 +177,9 @@ class PuzzleStore:
         """Newest game first, then in move order."""
         return sorted(self._puzzles.values(), key=lambda p: (-p.end_time, p.game_url, p.ply))
 
-    def query(self, flt: PuzzleFilter) -> list[Puzzle]:
-        return [p for p in self.all() if flt.matches(p)]
+    def query(self, flt: PuzzleFilter, order: str = "newest") -> list[Puzzle]:
+        matching = [p for p in self.all() if flt.matches(p)]
+        return sort_puzzles(matching, order, flt.lookahead)
 
     def counts(self, flt: PuzzleFilter) -> dict[str, int]:
         """Puzzles per marker matching everything in the filter except the marker choice."""

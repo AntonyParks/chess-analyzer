@@ -126,3 +126,36 @@ def test_bad_puzzle_entry_counts_as_corrupt(tmp_path):
     path.write_text(json.dumps({"puzzles": [{"id": "x"}]}), encoding="utf-8")
     assert len(pz.PuzzleStore(path)) == 0
     assert (tmp_path / "puzzles.json.bak").exists()
+
+
+def test_sort_easiest_and_hardest():
+    deep = make_puzzle("a#1", end=300, visible=8)
+    shallow_long = make_puzzle("b#1", end=200, visible=2)  # two steps
+    shallow_short = make_puzzle("c#1", end=100, visible=2, steps=[step({"x": 0.5, "y": 0.0})])
+    shallow_many_answers = make_puzzle(
+        "d#1", end=50, visible=2, steps=[step({"x": 0.5, "y": 0.48, "z": 0.0})]
+    )
+    puzzles = [deep, shallow_long, shallow_short, shallow_many_answers]
+    ids = lambda ps: [p.id for p in ps]  # noqa: E731
+    assert ids(pz.sort_puzzles(puzzles)) == ["a#1", "b#1", "c#1", "d#1"]  # newest first
+    # Shallow first; then one step before two; then two accepted answers before one.
+    assert ids(pz.sort_puzzles(puzzles, "easiest")) == ["d#1", "c#1", "b#1", "a#1"]
+    assert ids(pz.sort_puzzles(puzzles, "hardest")) == ["a#1", "b#1", "c#1", "d#1"]
+    # With a one-move lookahead the two-step line is cut to one step: ties fall to the
+    # remaining keys, and equal puzzles stay newest first.
+    assert ids(pz.sort_puzzles(puzzles, "easiest", lookahead=1))[:3] == ["d#1", "b#1", "c#1"]
+
+
+def test_bigger_blunder_is_easier_when_otherwise_equal():
+    small = make_puzzle("s#1", end=2, visible=2, steps=[step({"x": 0.5, "y": 0.0})])
+    big = make_puzzle("b#1", end=1, visible=2, steps=[step({"x": 0.5, "y": 0.0})])
+    small.win_drop, big.win_drop = 0.12, 0.9
+    assert [p.id for p in pz.sort_puzzles([small, big], "easiest")] == ["b#1", "s#1"]
+
+
+def test_store_query_uses_order(tmp_path):
+    store = pz.PuzzleStore(tmp_path / "p.json")
+    store.add(make_puzzle("deep#1", end=200, visible=10))
+    store.add(make_puzzle("easy#1", end=100, visible=2))
+    assert [p.id for p in store.query(pz.PuzzleFilter())] == ["deep#1", "easy#1"]
+    assert [p.id for p in store.query(pz.PuzzleFilter(), "easiest")] == ["easy#1", "deep#1"]

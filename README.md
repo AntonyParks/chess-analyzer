@@ -75,6 +75,11 @@ each one, so results from the deeper scan cannot leak in. A mistake that no sear
 scan depth catches counts as needing the full scan depth (13 plies at depth 12).
 With a short lookahead, long lines are also cut to fit it.
 
+**Order** puts puzzles newest game first, easiest first (the default) or hardest first.
+Difficulty is ranked by how far ahead you must look before the better move clearly wins, then
+how many moves the line asks for, then how many answers are accepted (more is easier), then
+how big the mistake was (a bigger blunder is easier to spot).
+
 Puzzles and results are stored in `puzzles.json` in the data directory.
 
 ## Requirements

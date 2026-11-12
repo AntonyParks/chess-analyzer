@@ -55,6 +55,7 @@ class AppConfig:
     puzzle_markers: list[str] = field(default_factory=lambda: ["??", "?", "?!"])
     puzzle_lookahead: int = 5  # moves; PUZZLE_ANY_LOOKAHEAD = no limit
     puzzle_mode: str = "unsolved"  # "all" | "unsolved" | "failed"
+    puzzle_order: str = "easiest"  # "newest" | "easiest" | "hardest"
     extra: dict[str, Any] = field(default_factory=dict)  # unknown keys, preserved on save
 
 
@@ -99,6 +100,8 @@ def from_dict(raw: dict[str, Any]) -> AppConfig:
     cfg.puzzle_lookahead = max(1, min(PUZZLE_ANY_LOOKAHEAD, cfg.puzzle_lookahead))
     if cfg.puzzle_mode not in ("all", "unsolved", "failed"):
         cfg.puzzle_mode = "unsolved"
+    if cfg.puzzle_order not in ("newest", "easiest", "hardest"):
+        cfg.puzzle_order = "easiest"
     return cfg
 
 
