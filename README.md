@@ -24,6 +24,9 @@ continuations.*
 - **Analyze game** — evaluates every position of the loaded game in the background (keep
   browsing meanwhile), marks inaccuracies, mistakes and blunders in the move list, and builds
   a **Review** with a better alternative for each flagged move
+- **Puzzles from your games** — scans your recent chess.com games for your own inaccuracies,
+  mistakes and blunders and turns each into a puzzle: find the better move you missed (see
+  below)
 - **Moves** — clickable, colour-coded move list; arrow keys and the eval graph also navigate
 - **Opening Explorer** — what moves real players have made from the current position
   (Lichess data; needs a free API token)
@@ -35,6 +38,40 @@ continuations.*
 - Dark, resizable layout with menus and keyboard shortcuts; settings, window layout and
   recent files are remembered
 - Stockfish 19 **downloads automatically** on first run
+
+## Puzzles from your games
+
+Open the **Puzzles** tab (F7), enter your chess.com username, choose how many recent games
+and which time controls, and press **Scan games**. The scan runs in the background at the
+lowest engine priority (roughly 5–15 s a game at the default depth 12) and keeps what it has
+found if you stop it; games already scanned are skipped next time. Games come from chess.com's
+public API, so no login is needed.
+
+Every move of yours that gave up at least 0.10 winning chances (the same scale as the review's
+`?!` / `?` / `??` marks: 0.10 / 0.20 / 0.30, about 5 / 10 / 15 points of win probability)
+becomes a puzzle. Press **Start** and the board shows the position before your move:
+
+- Any move within 0.05 winning chances of the engine's best counts as correct.
+- While the engine's line stays forcing (its best move clearly ahead of the rest), the opponent
+  replies and you keep going, up to four moves.
+- A wrong move is rejected (the squares flash red). The first miss, a **Hint** or **Show
+  solution** records the puzzle as missed; **Retry failed** brings those back until solved.
+  **Retry** replays the open puzzle as practice and is not recorded; only a puzzle opened with
+  **Start** or **Next** counts.
+- While a puzzle is open the engine is silent: no hover scores, heatmap, arrow, eval bar or
+  engine lines. Leaving the tab puts your own game back, analysis included.
+
+Filters: tick or untick **Blunders**, **Mistakes** and **Inaccuracies**, and set the
+**Lookahead** slider (1–12 moves, or any depth). Lookahead is a difficulty setting: a puzzle is
+only shown if an engine search that many moves deep already sees that the better move beats
+yours, which hides mistakes whose punishment only appears far down the line. Engine depth is
+approximate (Stockfish still follows checks and captures past it), so treat it as a guide.
+These shallow searches run on a second, single-threaded Stockfish with its hash cleared before
+each one, so results from the deeper scan cannot leak in. A mistake that no search below the
+scan depth catches counts as needing the full scan depth (13 plies at depth 12).
+With a short lookahead, long lines are also cut to fit it.
+
+Puzzles and results are stored in `puzzles.json` in the data directory.
 
 ## Requirements
 
@@ -150,6 +187,7 @@ libraries must be installed — see `.github/workflows/ci.yml`). Layout:
 | `engine_worker.py`, `engine_setup.py` | Stockfish process and scheduling; finding/downloading the engine |
 | `evaluation.py`, `move_explain.py` | score formatting/ranking; plain-English move notes |
 | `lichess_api.py`, `opening_insights.py` | Lichess client; the Insights crawl and statistics |
+| `chesscom_api.py`, `puzzles.py`, `puzzle_scan.py` | chess.com game download; the puzzle model, answer rules and store; the mistake scanner |
 | `board_image.py`, `pieces.py`, `theme.py` | Save Image rendering, piece images, the colour palette |
 
 ## Dependencies and credits

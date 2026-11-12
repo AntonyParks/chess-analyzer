@@ -61,6 +61,7 @@ class FakeEngine:
         self.configured = None
         self.quit_called = False
         self.closed = False
+        self.fresh_searches = 0
 
     def score_for(self, board: chess.Board) -> int:
         """Deterministic, position-dependent and quick."""
@@ -69,8 +70,10 @@ class FakeEngine:
     def configure(self, options):
         self.configured = dict(options)
 
-    def analysis(self, board, limit):
+    def analysis(self, board, limit, *, game=None):
         self.calls += 1
+        if game is not None:
+            self.fresh_searches += 1
         if self.fail_after is not None and self.calls > self.fail_after:
             raise chess.engine.EngineTerminatedError("engine process died")
         return FakeAnalysis(self, board, limit)

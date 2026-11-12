@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 import chess
 from PySide6.QtCore import (
@@ -96,6 +96,14 @@ class BoardWidget(QWidget):
         self._show_arrow = False
         self._heatmap_on = True
         self._explorer_move_order: list[str] = []
+        # Puzzle mode: no engine requests, no scores on the board; moves the user makes go
+        # through the interceptor first (False = rejected, the move is not played).
+        self._puzzle_mode = False
+        self._interceptor: Callable[[chess.Move], bool] | None = None
+        self._flash: tuple[set[chess.Square], QColor] | None = None
+        self._flash_timer = QTimer(self)
+        self._flash_timer.setSingleShot(True)
+        self._flash_timer.timeout.connect(self._clear_flash)
 
         # Hover
         self._hovered: chess.Square | None = None
@@ -179,6 +187,10 @@ class BoardWidget(QWidget):
     @property
     def depth(self) -> int:
         return self._depth
+
+    @property
+    def puzzle_mode(self) -> bool:
+        return self._puzzle_mode
 
     def board_rect(self) -> QRect:
         return QRect(self._board_rect)
@@ -274,6 +286,52 @@ class BoardWidget(QWidget):
         self._cancel_hover()
         self._request_heatmap()
 
+    def set_puzzle_mode(self, enabled: bool) -> None:
+        """Hide everything that could give a puzzle away and stop asking the engine.
+
+        The heatmap and arrow settings are left as they are; they come back on exit.
+        """
+        if enabled == self._puzzle_mode:
+            return
+        self._puzzle_mode = enabled
+        self._cancel_hover()
+        self._hover_evals = {}
+        if enabled:
+            if self._heatmap_id is not None and self._worker is not None:
+                self._worker.cancel(self._heatmap_id)
+            self._heatmap_id = None
+            self.thinking.emit(False)
+        else:
+            self._request_heatmap()
+        self.update()
+
+    def set_move_interceptor(self, fn: Callable[[chess.Move], bool] | None) -> None:
+        """Moves the user makes on the board are offered to ``fn`` first; False rejects one."""
+        self._interceptor = fn
+
+    def swap_state(self, state: GameState) -> GameState:
+        """Show another game state (its analysis untouched) and return the previous one."""
+        self._settle_animation()
+        self._cancel_promotion()
+        self._cancel_hover()
+        if self._heatmap_id is not None and self._worker is not None:
+            self._worker.cancel(self._heatmap_id)
+        self._heatmap_id = None
+        old, self._state = self._state, state
+        self._show_position()
+        return old
+
+    def flash_squares(
+        self, squares: Sequence[chess.Square], colour: str = theme.FLASH_BAD, ms: int = 600
+    ) -> None:
+        self._flash = (set(squares), _rgba(colour, 170))
+        self._flash_timer.start(ms)
+        self.update()
+
+    def _clear_flash(self) -> None:
+        self._flash = None
+        self.update()
+
     def set_explorer_move_order(self, ucis: Sequence[str]) -> None:
         self._explorer_move_order = list(ucis)
 
@@ -360,6 +418,8 @@ class BoardWidget(QWidget):
     # ── Engine ────────────────────────────────────────────────────────────────
 
     def _request_heatmap(self) -> None:
+        if self._puzzle_mode:
+            return
         ply = self._state.current_ply
         analysis = self._state.analysis.get(ply)
         if analysis is not None and analysis.complete and analysis.depth == self._depth:
@@ -399,7 +459,7 @@ class BoardWidget(QWidget):
         )
 
     def _request_hover_evals(self, square: chess.Square) -> None:
-        if self._worker is None:
+        if self._worker is None or self._puzzle_mode:
             return
         legal = self._legal_moves_from(square)
         if not legal:
@@ -530,8 +590,9 @@ class BoardWidget(QWidget):
         board = self.board
         self._paint_squares(painter)
         self._paint_last_move(painter)
-        if self._heatmap_on:
+        if self._heatmap_on and not self._puzzle_mode:
             self._paint_heatmap(painter)
+        self._paint_flash(painter)
         self._paint_selection(painter)
         self._paint_pieces(painter, board)
         self._paint_arrows(painter)
@@ -554,6 +615,13 @@ class BoardWidget(QWidget):
             return
         painter.fillRect(self._square_rect(last.from_square), _rgba(theme.LAST_MOVE, 110))
         painter.fillRect(self._square_rect(last.to_square), _rgba(theme.LAST_MOVE, 160))
+
+    def _paint_flash(self, painter: QPainter) -> None:
+        if self._flash is None:
+            return
+        squares, colour = self._flash
+        for square in squares:
+            painter.fillRect(self._square_rect(square), colour)
 
     def _paint_heatmap(self, painter: QPainter) -> None:
         for square, move_scores in self._heatmap_data.items():
@@ -582,7 +650,7 @@ class BoardWidget(QWidget):
             if move.to_square in seen:
                 continue
             seen.add(move.to_square)
-            t = self._rank_map.get(move.uci())
+            t = None if self._puzzle_mode else self._rank_map.get(move.uci())
             colour = QColor(theme.rank_color(t)) if t is not None else QColor(theme.SEL_DOT)
             colour.setAlpha(230)
             painter.setBrush(colour)
@@ -619,7 +687,7 @@ class BoardWidget(QWidget):
 
     def _paint_arrows(self, painter: QPainter) -> None:
         width = max(4, self._sq / 11)
-        if self._show_arrow and self._best_move is not None:
+        if self._show_arrow and self._best_move is not None and not self._puzzle_mode:
             self._draw_arrow(painter, self._best_move, _rgba(theme.GOLD, 215), width)
         widths = (7, 5, 4, 3, 2)
         for i, move in enumerate(self._pv_moves):
@@ -849,7 +917,15 @@ class BoardWidget(QWidget):
         if any(m.promotion for m in legal):
             self._begin_promotion(from_sq, to_sq)
             return
-        self._execute_move(legal[0], animated)
+        self._user_move(legal[0], animated)
+
+    def _user_move(self, move: chess.Move, animated: bool) -> None:
+        """A move the user made with the mouse: offered to the interceptor first."""
+        if self._interceptor is not None and not self._interceptor(move):
+            self.clear_selection()
+            self.flash_squares([move.from_square, move.to_square])
+            return
+        self._execute_move(move, animated)
 
     def _handle_click(self, square: chess.Square) -> None:
         board = self.board
@@ -904,7 +980,7 @@ class BoardWidget(QWidget):
         self._cancel_promotion()
         move = chess.Move(from_sq, to_sq, promotion=piece_type)
         if move in self.board.legal_moves:
-            self._execute_move(move, animated=True)
+            self._user_move(move, animated=True)
 
     def _cancel_promotion(self) -> None:
         if self._pending_promotion is None:

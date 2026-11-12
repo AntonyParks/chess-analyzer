@@ -12,6 +12,22 @@ from chess_analyzer.engine_worker import EngineWorker, EvalRequest, Kind
 from chess_analyzer.ui_dispatch import QueueDispatcher
 
 
+def test_fresh_requests_clear_the_hash_and_cache_separately():
+    h = Harness()
+    done = []
+    move = chess.Move.from_uci("e2e4")
+    for fresh in (False, True, True):
+        req = h.request(Kind.BATCH, moves=[move], on_done=done.append)
+        h.worker.submit(
+            EvalRequest(req.kind, req.board, req.moves, req.depth, req.on_done, fresh=fresh)
+        )
+    assert h.wait_for(lambda: len(done) == 3)
+    engine = h.spawned[0]
+    # One normal search and one fresh one; the second fresh request is served from the cache.
+    assert engine.calls == 2 and engine.fresh_searches == 1
+    h.worker.shutdown()
+
+
 class Harness:
     def __init__(self, engines=None, **worker_kwargs):
         self.engines = list(engines) if engines is not None else [FakeEngine()]

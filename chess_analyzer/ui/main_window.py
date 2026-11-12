@@ -38,6 +38,7 @@ from ..game_state import GameState
 from ..lichess_api import LichessClient
 from ..opening_insights import InsightsWorker
 from ..pieces import PieceImages
+from ..puzzles import PuzzleStore
 from .board_widget import BoardWidget
 from .dispatcher import QtDispatcher
 from .engine_lines import EngineLinesPanel
@@ -46,6 +47,7 @@ from .explorer_panel import ExplorerPanel
 from .insights_panel import InsightsPanel
 from .moves_panel import MovesPanel
 from .piece_pixmaps import PiecePixmaps
+from .puzzles_panel import PuzzlesPanel
 from .review_panel import ReviewPanel
 from .settings_dialog import SettingsDialog
 from .style import set_role
@@ -55,7 +57,7 @@ log = logging.getLogger(__name__)
 APP_TITLE = "Chess Analyzer"
 PGN_FILTER = "PGN files (*.pgn);;All files (*)"
 MAX_RECENT = 8
-TAB_MOVES, TAB_EXPLORER, TAB_INSIGHTS, TAB_REVIEW = range(4)
+TAB_MOVES, TAB_EXPLORER, TAB_INSIGHTS, TAB_REVIEW, TAB_PUZZLES = range(5)
 
 
 class MainWindow(QMainWindow):
@@ -79,6 +81,9 @@ class MainWindow(QMainWindow):
         self._worker_factory = worker_factory
 
         self._worker: EngineWorker | None = None
+        # A second, single-threaded Stockfish for the puzzle lookahead ladder (cold searches
+        # must not share the main engine's hash); its process starts on first use.
+        self._ladder_worker: EngineWorker | None = None
         self._runner: GameAnalysisRunner | None = None
         self._review_entries: list = []
         self._pgn_path = ""
@@ -87,6 +92,9 @@ class MainWindow(QMainWindow):
         self._config_save_failed = False
         self._lichess = LichessClient(lambda: self._cfg.lichess_token)
         self._insights_worker = InsightsWorker(self._lichess, self._dispatcher)
+        self._puzzle_store = PuzzleStore(paths.puzzles_path(self._data_dir))
+        self._puzzle_active = False
+        self._saved_state: GameState | None = None  # the user's game while a puzzle is up
 
         self.setWindowTitle(APP_TITLE)
         self.setMinimumSize(960, 640)
@@ -138,6 +146,9 @@ class MainWindow(QMainWindow):
         )
         self.act_insights = action(
             "Opening &insights", lambda: self._tabs.setCurrentIndex(TAB_INSIGHTS), "Ctrl+I"
+        )
+        self.act_puzzles = action(
+            "&Puzzles from my games", lambda: self._tabs.setCurrentIndex(TAB_PUZZLES), "F7"
         )
         self.act_settings = action("&Settings…", self._open_settings, "Ctrl+,")
         self.act_about = action("&About", self._about)
@@ -193,6 +204,15 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self._explorer, "Explorer")
         self._tabs.addTab(self._insights, "Insights")
         self._tabs.addTab(self._review, "Review")
+        self._puzzles = PuzzlesPanel(
+            cfg=self._cfg,
+            store=self._puzzle_store,
+            board=self._board,
+            dispatcher=self._dispatcher,
+            save_config=self._save_config,
+            enter_mode=self._enter_puzzle_mode,
+        )
+        self._tabs.addTab(self._puzzles, "Puzzles")
         self._tabs.currentChanged.connect(self._on_tab_changed)
         self._engine_lines = EngineLinesPanel(self._board)
 
@@ -253,6 +273,8 @@ class MainWindow(QMainWindow):
         analysis_menu.addSeparator()
         analysis_menu.addAction(self.act_explorer)
         analysis_menu.addAction(self.act_insights)
+        analysis_menu.addSeparator()
+        analysis_menu.addAction(self.act_puzzles)
 
         help_menu = bar.addMenu("&Help")
         help_menu.addAction(self.act_about)
@@ -400,6 +422,12 @@ class MainWindow(QMainWindow):
         self.act_analyze.setEnabled(True)
         self._board.set_worker(self._worker)
         self._insights.set_engine(self._worker)
+        self._ladder_worker = self._worker_factory(
+            exe, self._dispatcher, threads=1, hash_mb=16, on_error=self._on_engine_error
+        )
+        self._puzzles.set_engine(self._worker, self._ladder_worker)
+        if self._puzzle_active:
+            self.act_analyze.setEnabled(False)
 
     def _on_engine_failed(self, error: Exception) -> None:
         self._setup_label.setText("No engine")
@@ -420,6 +448,10 @@ class MainWindow(QMainWindow):
     # ── Board callbacks ───────────────────────────────────────────────────────
 
     def _on_navigated(self, _ply: int) -> None:
+        if self._puzzle_active:  # nothing may analyse or look up the puzzle position
+            self._refresh_views()
+            self._update_nav_actions()
+            return
         if self._runner is not None:
             self._runner.on_state_changed()
         self._engine_lines.clear_selection()
@@ -430,6 +462,8 @@ class MainWindow(QMainWindow):
         self._update_nav_actions()
 
     def _on_evals_updated(self, _ply: int, complete: bool) -> None:
+        if self._puzzle_active:
+            return
         self._refresh_views()
         self._explorer.on_evals_updated()
         if complete and (self._runner is None or not self._runner.running):
@@ -446,14 +480,16 @@ class MainWindow(QMainWindow):
         if ply > self._last_sound_ply:
             sound.play_move()
         self._last_sound_ply = ply
+        if self._puzzle_active:
+            return
         self._moves.refresh()
         self._eval_graph.refresh()
         self._eval_bar.set_cp(self._board.position_cp)
 
     def _update_nav_actions(self) -> None:
         state = self._board.state
-        at_start = state.current_ply == 0
-        at_end = state.at_end
+        at_start = state.current_ply == 0 or self._puzzle_active
+        at_end = state.at_end or self._puzzle_active
         self.act_first.setEnabled(not at_start)
         self.act_prev.setEnabled(not at_start)
         self.act_undo.setEnabled(not at_start)
@@ -484,7 +520,53 @@ class MainWindow(QMainWindow):
         self._opening_label.setText(text)
 
     def _on_tab_changed(self, index: int) -> None:
+        if index != TAB_PUZZLES:
+            self._exit_puzzle_mode()
+        else:
+            self._puzzles.refresh()
         self._explorer.set_active(index == TAB_EXPLORER)
+
+    # ── Puzzle mode ───────────────────────────────────────────────────────────
+
+    def _enter_puzzle_mode(self) -> None:
+        """Give the board a separate game for puzzles and hide every engine score."""
+        if self._puzzle_active:
+            return
+        if self._runner is not None:
+            self._runner.cancel()
+        self._puzzle_active = True
+        self.act_analyze.setEnabled(False)
+        for act in self._puzzle_locked_actions():
+            act.setEnabled(False)
+        self._board.set_puzzle_mode(True)
+        self._saved_state = self._board.swap_state(GameState())
+        for widget in (self._eval_bar, self._eval_graph, self._engine_lines):
+            widget.hide()
+        self._analysis_label.setText("")
+        self._thinking_label.setText("")
+
+    def _exit_puzzle_mode(self) -> None:
+        """Put the user's game (with its analysis) back on the board."""
+        if not self._puzzle_active:
+            return
+        self._puzzles.end_session()
+        self._board.set_move_interceptor(None)
+        self._board.clear_pv()
+        self._puzzle_active = False
+        saved, self._saved_state = self._saved_state, None
+        self._board.set_flipped(self._cfg.flip)
+        self._board.swap_state(saved if saved is not None else GameState())
+        self._board.set_puzzle_mode(False)
+        for widget in (self._eval_bar, self._eval_graph, self._engine_lines):
+            widget.show()
+        for act in self._puzzle_locked_actions():
+            act.setEnabled(True)
+        self.act_analyze.setEnabled(self._worker is not None)
+        self._last_sound_ply = self._board.state.current_ply
+        self._on_navigated(self._board.state.current_ply)
+
+    def _puzzle_locked_actions(self) -> tuple[QAction, ...]:
+        return (self.act_heatmap, self.act_arrow, self.act_flip, self.act_save)
 
     # ── Files ─────────────────────────────────────────────────────────────────
 
@@ -570,6 +652,8 @@ class MainWindow(QMainWindow):
     def _load_new_game(
         self, start_board: chess.Board, moves: list[chess.Move], headers: dict[str, str]
     ) -> None:
+        if self._puzzle_active:
+            self._tabs.setCurrentIndex(TAB_MOVES)  # leaves puzzle mode first
         if self._runner is not None:
             self._runner.cancel()
         self._review_entries = []
@@ -625,6 +709,8 @@ class MainWindow(QMainWindow):
     def _analyze_game(self) -> None:
         if self._runner is None or self._runner.running:
             return
+        if self._puzzle_active:
+            self._tabs.setCurrentIndex(TAB_MOVES)  # back to the user's own game
         if not self._board.state.moves:
             QMessageBox.information(self, "Analyze game", "Load a PGN or play some moves first.")
             return
@@ -644,7 +730,7 @@ class MainWindow(QMainWindow):
     def _on_analysis_finished(self, completed: bool) -> None:
         self._analysis_label.setText("")
         self._review.set_analyzing(False)
-        self.act_analyze.setEnabled(self._worker is not None)
+        self.act_analyze.setEnabled(self._worker is not None and not self._puzzle_active)
         self._moves.refresh()
         self._eval_graph.refresh()
         self._engine_lines.refresh()
@@ -722,8 +808,10 @@ class MainWindow(QMainWindow):
             self._cfg.splitter_sizes = sizes
         self._save_config()
         self._insights_worker.stop()
-        if self._worker is not None:
-            self._worker.shutdown()
+        self._puzzles.shutdown()
+        for worker in (self._worker, self._ladder_worker):
+            if worker is not None:
+                worker.shutdown()
         self._dispatcher.close()
         super().closeEvent(event)
         QTimer.singleShot(0, QApplication.quit)

@@ -60,6 +60,10 @@ def config_path(base: Path | None = None) -> Path:
     return (base or user_data_dir()) / "config.json"
 
 
+def puzzles_path(base: Path | None = None) -> Path:
+    return (base or user_data_dir()) / "puzzles.json"
+
+
 def logs_dir(base: Path | None = None) -> Path:
     return (base or user_data_dir()) / "logs"
 

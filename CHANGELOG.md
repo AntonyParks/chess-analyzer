@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Puzzles from your games** (a new **Puzzles** tab, F7): downloads your recent chess.com
+  games (public API, no login), finds the moves where you gave up winning chances and turns
+  each into a puzzle where you look for the better move. Severity filters (blunders,
+  mistakes, inaccuracies), a **Lookahead** difficulty slider (only mistakes whose punishment
+  shows within N moves), multi-move lines while the engine line stays forcing, near-best
+  answers accepted, hints, solutions, and a **Retry failed** mode. Results persist in
+  `puzzles.json`; scanned games are not scanned again.
+- The board has a puzzle mode (no engine requests or scores, user moves checked before they
+  are played) and can swap in a separate game state, so puzzles never disturb the loaded
+  game or its analysis.
+
 ## 1.1.0 — 2026-10-07
 
 The user interface is rebuilt in Qt (PySide6); everything below the UI is unchanged.

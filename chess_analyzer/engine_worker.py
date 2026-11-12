@@ -64,6 +64,9 @@ class EvalRequest:
     on_done: Callable[[EvalResult], None]
     on_progress: Callable[[EvalResult], None] | None = None
     tag: Any = None  # returned untouched (Analyze Game uses the ply index)
+    # Clear the engine's hash before each search, so a shallow search sees only what
+    # its depth allows (the puzzle lookahead ladder); otherwise deeper results leak in.
+    fresh: bool = False
 
 
 @dataclass(frozen=True)
@@ -83,7 +86,9 @@ class EngineLike(Protocol):
     options: Mapping[str, Any]
 
     def configure(self, options: Mapping[str, Any]) -> None: ...
-    def analysis(self, board: chess.Board, limit: chess.engine.Limit) -> Any: ...
+    def analysis(
+        self, board: chess.Board, limit: chess.engine.Limit, *, game: object = None
+    ) -> Any: ...
     def quit(self) -> None: ...
     def close(self) -> None: ...
 
@@ -118,7 +123,7 @@ class EngineWorker:
         self._hash_mb = hash_mb
         self._on_error = on_error
         self._factory = engine_factory or open_engine
-        self._cache: OrderedDict[tuple[str, str, int], MoveEval] = OrderedDict()
+        self._cache: OrderedDict[tuple[str, str, int, bool], MoveEval] = OrderedDict()
         self._cache_size = cache_size
 
         self._cond = threading.Condition()
@@ -295,7 +300,7 @@ class EngineWorker:
     def _evaluate(self, engine: EngineLike, pending: _Pending, move: chess.Move) -> MoveEval | None:
         """Evaluate the position after ``move``; None if the search was interrupted."""
         request = pending.request
-        key = (request.board.epd(), move.uci(), request.depth)
+        key = (request.board.epd(), move.uci(), request.depth, request.fresh)
         cached = self._cache.get(key)
         if cached is not None:
             self._cache.move_to_end(key)
@@ -305,7 +310,9 @@ class EngineWorker:
         after.push(move)
         limit = chess.engine.Limit(depth=request.depth)
         aborted = False
-        with engine.analysis(after, limit) as analysis:
+        # A new ``game`` object makes python-chess send ucinewgame, which clears the hash.
+        game = object() if request.fresh else None
+        with engine.analysis(after, limit, game=game) as analysis:
             with self._cond:
                 self._current_analysis = analysis
             try:
