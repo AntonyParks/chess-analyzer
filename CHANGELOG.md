@@ -15,6 +15,9 @@
   current month and new months and scans only unscanned games.
 - Puzzle **Order**: newest first, easiest first or hardest first (difficulty from the
   lookahead needed, line length, number of accepted answers and size of the mistake).
+- **Export for phone**: every puzzle in one self-contained web page (filters, lookahead,
+  ordering, multi-move lines, hints, retry; tap or drag to move), with results kept on the
+  phone. Also `python -m chess_analyzer.phone_export`.
 - The board has a puzzle mode (no engine requests or scores, user moves checked before they
   are played) and can swap in a separate game state, so puzzles never disturb the loaded
   game or its analysis.

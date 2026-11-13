@@ -1,0 +1,823 @@
+<title>Mistake Puzzles</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Layout: one column on a phone (board, feedback, actions, settings); board left, panel right when wide. */
+:root {
+  --bg: #eef0ee;
+  --surface: #ffffff;
+  --ink: #1d2422;
+  --muted: #5d6763;
+  --line: #d5dad7;
+  --accent: #2c6a55;
+  --accent-ink: #ffffff;
+  --good: #23804f;
+  --bad: #c0392b;
+  --warn: #a8641a;
+  --sq-light: #f0d9b5;
+  --sq-dark: #b58863;
+  --sq-last: rgba(205, 210, 106, 0.75);
+  --sq-sel: rgba(20, 85, 30, 0.5);
+  --dot: rgba(20, 40, 30, 0.32);
+  --flash-bad: rgba(220, 40, 30, 0.75);
+  --flash-good: rgba(40, 170, 90, 0.7);
+  --font-display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --font-body: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #151918; --surface: #1f2523; --ink: #e6ebe8; --muted: #9aa5a0; --line: #333b38;
+    --accent: #5fb592; --accent-ink: #0f1a15; --good: #5fcf8e; --bad: #ff6b5e; --warn: #f0a75a;
+    --dot: rgba(20, 40, 30, 0.4);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #151918; --surface: #1f2523; --ink: #e6ebe8; --muted: #9aa5a0; --line: #333b38;
+  --accent: #5fb592; --accent-ink: #0f1a15; --good: #5fcf8e; --bad: #ff6b5e; --warn: #f0a75a;
+  --dot: rgba(20, 40, 30, 0.4);
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { background: var(--bg); color: var(--ink); }
+body { font-family: var(--font-body); font-size: 15px; line-height: 1.45; }
+.wrap {
+  max-width: 1040px; margin: 0 auto;
+  padding-block: 12px 32px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 14px;
+}
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font-family: var(--font-display); font-size: 1.35rem; margin: 0; letter-spacing: -0.01em; }
+h1 .who { color: var(--muted); font-weight: 500; }
+.sync { font-size: 0.78rem; color: var(--muted); }
+.main { display: grid; gap: 14px; }
+@media (min-width: 900px) { .main { grid-template-columns: minmax(0, 560px) minmax(0, 1fr); align-items: start; } }
+.col { display: grid; gap: 12px; min-width: 0; }
+
+.meta { font-size: 0.85rem; color: var(--muted); display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.meta .marker { font-family: var(--font-mono); font-weight: 500; padding: 1px 7px; border-radius: 999px; color: #fff; font-size: 0.78rem; }
+.marker[data-m="??"] { background: #c0392b; }
+.marker[data-m="?"] { background: #d2802a; }
+.marker[data-m="?!"] { background: #4a7fb5; }
+.meta a { color: var(--accent); }
+
+.board-frame { position: relative; width: 100%; max-width: 560px; aspect-ratio: 1; border-radius: 4px; overflow: hidden; box-shadow: 0 1px 0 var(--line), 0 6px 20px rgba(0,0,0,0.12); }
+.board { position: absolute; inset: 0; touch-action: none; user-select: none; -webkit-user-select: none; }
+.squares { position: absolute; inset: 0; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(8, 1fr); }
+.sq { position: relative; }
+.sq.l { background: var(--sq-light); }
+.sq.d { background: var(--sq-dark); }
+.sq.last::before, .sq.sel::before, .sq.fb::before, .sq.fg::before { content: ""; position: absolute; inset: 0; }
+.sq.last::before { background: var(--sq-last); }
+.sq.sel::before { background: var(--sq-sel); }
+.sq.fb::before { background: var(--flash-bad); }
+.sq.fg::before { background: var(--flash-good); }
+.sq.dot::after { content: ""; position: absolute; left: 36%; top: 36%; width: 28%; height: 28%; border-radius: 50%; background: var(--dot); }
+.sq.cap::after { content: ""; position: absolute; inset: 4%; border-radius: 50%; border: 5px solid var(--dot); }
+.coord { position: absolute; font: 600 10px/1 var(--font-body); pointer-events: none; }
+.coord.r { left: 3px; top: 3px; }
+.coord.f { right: 3px; bottom: 3px; }
+.sq.l .coord { color: var(--sq-dark); }
+.sq.d .coord { color: var(--sq-light); }
+.pieces { position: absolute; inset: 0; pointer-events: none; }
+.pc { position: absolute; left: 0; top: 0; width: 12.5%; height: 12.5%; background-size: 100% 100%; will-change: transform; }
+.pc.moving { transition: transform 220ms ease-out; }
+.pc.dragging { z-index: 5; transform-origin: center; scale: 1.15; }
+@media (prefers-reduced-motion: reduce) { .pc.moving { transition: none; } }
+
+.promo { position: absolute; inset: 0; background: rgba(0,0,0,0.45); display: flex; align-items: center; justify-content: center; gap: 6px; z-index: 10; }
+.promo button { width: 22%; aspect-ratio: 1; border: 0; border-radius: 8px; background: var(--surface) center / 85% no-repeat; cursor: pointer; }
+
+.feedback { min-height: 1.6em; font-weight: 600; font-size: 1.02rem; }
+.feedback[data-role="good"] { color: var(--good); }
+.feedback[data-role="bad"] { color: var(--bad); }
+.feedback[data-role="warn"] { color: var(--warn); }
+.feedback .line { font-family: var(--font-mono); font-weight: 500; font-size: 0.92rem; }
+
+.actions { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; max-width: 560px; }
+button { font: 600 0.92rem var(--font-body); }
+.btn { min-height: 44px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); cursor: pointer; padding: 0 10px; }
+.btn:disabled { opacity: 0.4; cursor: default; }
+.btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.btn:focus-visible, .chip:focus-within, select:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; display: grid; gap: 8px; }
+.prompt b { font-family: var(--font-mono); font-weight: 500; }
+.small { font-size: 0.82rem; color: var(--muted); }
+.explain { font-size: 0.9rem; }
+.linebox { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.linebox .san { font-family: var(--font-mono); font-size: 0.86rem; min-width: 0; overflow-wrap: anywhere; }
+
+h2 { font-family: var(--font-display); font-size: 1rem; margin: 0; }
+.field { display: grid; gap: 6px; }
+.label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--muted); font-weight: 600; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line); cursor: pointer; font-size: 0.88rem; }
+.chip input { position: absolute; opacity: 0; pointer-events: none; }
+.chip:has(input:checked) { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.chip .n { font-variant-numeric: tabular-nums; opacity: 0.8; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+select { min-height: 40px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); padding: 0 8px; font: 500 0.9rem var(--font-body); flex: 1 1 140px; min-width: 0; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+.look-value { font-variant-numeric: tabular-nums; font-weight: 600; }
+.count { font-variant-numeric: tabular-nums; }
+footer { font-size: 0.75rem; color: var(--muted); }
+footer a { color: inherit; }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Mistake Puzzles <span class="who" id="who"></span></h1>
+    <span class="sync" id="sync">Results saved on this device</span>
+  </header>
+
+  <div class="main">
+    <div class="col">
+      <div class="meta" id="meta"><span>Loading puzzles…</span></div>
+      <div class="board-frame" id="frame">
+        <div class="board" id="board">
+          <div class="squares" id="squares"></div>
+          <div class="pieces" id="pieces"></div>
+        </div>
+      </div>
+      <div class="feedback" id="feedback" data-role="muted" aria-live="polite"></div>
+      <div class="actions">
+        <button class="btn" id="hint" type="button">Hint</button>
+        <button class="btn" id="solution" type="button">Solution</button>
+        <button class="btn" id="retry" type="button">Retry</button>
+        <button class="btn primary" id="next" type="button">Next</button>
+      </div>
+    </div>
+
+    <div class="col">
+      <section class="card" id="puzzle-card">
+        <div class="prompt" id="prompt"></div>
+        <div class="small" id="history"></div>
+        <div class="explain" id="explain"></div>
+        <div class="linebox" id="linebox" hidden>
+          <span class="san" id="line-san"></span>
+          <button class="btn" id="play-line" type="button">Play it on the board</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Practice</h2>
+        <div class="field">
+          <span class="label">Severity</span>
+          <div class="chips" id="markers"></div>
+        </div>
+        <div class="field">
+          <span class="label">Time control</span>
+          <div class="chips" id="classes"></div>
+        </div>
+        <div class="field">
+          <label class="label" for="look">Lookahead · <span class="look-value" id="look-value"></span></label>
+          <input type="range" id="look" min="1" step="1">
+          <span class="small">Only puzzles whose punishment shows within this many moves. Stockfish depth is approximate, so treat it as a difficulty dial, not an exact limit.</span>
+        </div>
+        <div class="row">
+          <select id="mode" aria-label="Which puzzles"></select>
+          <select id="order" aria-label="Order"></select>
+        </div>
+        <div class="row">
+          <span class="count small" id="count"></span>
+          <span style="flex:1"></span>
+          <button class="btn primary" id="start" type="button">Start</button>
+        </div>
+      </section>
+      <footer id="footer"></footer>
+    </div>
+  </div>
+</div>
+
+<script type="application/json" id="puzzle-data">__PUZZLE_DATA__</script>
+<script>
+(() => {
+  "use strict";
+  const DATA = JSON.parse(document.getElementById("puzzle-data").textContent);
+  const PUZZLES = DATA.puzzles;
+  const $ = (id) => document.getElementById(id);
+  const FILES = "abcdefgh";
+  const REPLY_MS = 650;
+  const PIECE_NAMES = { p: "pawn", n: "knight", b: "bishop", r: "rook", q: "queen", k: "king" };
+  const TC_LABELS = Object.fromEntries(DATA.timeClasses);
+  const MAX_LOOK = DATA.maxLook;
+
+  // ── Storage helpers (a viewer convenience; never required) ─────────────────
+  function readLocal(key, fallback) {
+    try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; } catch (e) { return fallback; }
+  }
+  function writeLocal(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* storage blocked */ }
+  }
+
+  // ── Results: the artifact database when published, else this device ──────
+  const Progress = (() => {
+    const LOCAL_KEY = "mistake-puzzles-progress-v1";
+    const local = readLocal(LOCAL_KEY, {});
+    let db = null, ready = false;
+    const buckets = {};   // bucket doc id -> {key: entry}
+    const chains = {};
+    const queued = [];    // results recorded before the database answered
+    let listeners = [];
+    const key = (id) => id.replace(/[^A-Za-z0-9_\-.~:@+]/g, "_");
+    function bucketOf(k) {
+      let h = 0;
+      for (let i = 0; i < k.length; i++) h = (h * 31 + k.charCodeAt(i)) >>> 0;
+      return "b" + String(h % 16).padStart(2, "0");
+    }
+    function entry(id) {
+      const k = key(id);
+      if (db && ready) { const b = buckets[bucketOf(k)]; return (b && b[k]) || null; }
+      return local[k] || null;
+    }
+    function bump(old, solved) {
+      const e = old || [0, 0, 0, null, 0];
+      return [e[0] + 1, e[1] + (solved ? 1 : 0), e[2] + (solved ? 0 : 1), solved ? "solved" : "failed", Date.now()];
+    }
+    function write(b) {
+      chains[b] = (chains[b] || Promise.resolve())
+        .then(() => db.doc("progress/" + b).set({ entries: Object.assign({}, buckets[b]) }))
+        .catch((err) => setSync("Could not save this result online (" + ((err && err.code) || "error") + ")."));
+    }
+    function recordNow(id, solved) {
+      const k = key(id);
+      if (db && ready) {
+        const b = bucketOf(k);
+        buckets[b] = Object.assign({}, buckets[b] || {});
+        buckets[b][k] = bump(buckets[b][k], solved);
+        write(b);
+      } else {
+        local[k] = bump(local[k], solved);
+        writeLocal(LOCAL_KEY, local);
+      }
+    }
+    function record(id, solved) {
+      if (db && !ready) { queued.push([id, solved]); return; }
+      recordNow(id, solved);
+    }
+    function emit() { listeners.forEach((fn) => fn()); }
+    async function connect() {
+      try { db = window.claude && window.claude.use ? await window.claude.use("db") : null; } catch (e) { db = null; }
+      if (!db) { setSync("Results saved on this device"); return; }
+      setSync("Loading your saved results…");
+      const timer = setTimeout(() => setSync("Can't reach your saved results yet; new results wait until it answers."), 10000);
+      db.collection("progress").onSnapshot((snap) => {
+        for (const d of snap.docs) {
+          const body = d.data() || {};
+          buckets[d.id] = Object.assign({}, body.entries || {});
+        }
+        if (!snap.metadata.fromCache) {
+          clearTimeout(timer);
+          if (!ready) {
+            ready = true;
+            queued.splice(0).forEach(([id, solved]) => recordNow(id, solved));
+          }
+          setSync("Results saved to your claude.ai account");
+        }
+        emit();
+      }, (err) => {
+        clearTimeout(timer);
+        db = null;
+        setSync("Online results unavailable (" + ((err && err.code) || "error") + "); saving on this device.");
+        queued.splice(0).forEach(([id, solved]) => recordNow(id, solved));
+        emit();
+      });
+    }
+    return { entry, record, connect, onChange: (fn) => listeners.push(fn) };
+  })();
+
+  function setSync(text) { $("sync").textContent = text; }
+
+  function history(p) {
+    const e = Progress.entry(p.id);
+    const h = p.h;
+    if (!e) return { attempts: h[0], solved: h[1], failed: h[2], last: h[3] };
+    return { attempts: h[0] + e[0], solved: h[1] + e[1], failed: h[2] + e[2], last: e[3] };
+  }
+
+  // ── Settings ───────────────────────────────────────────────────────────────
+  const SETTINGS_KEY = "mistake-puzzles-settings-v1";
+  const presentClasses = DATA.timeClasses.map((t) => t[0]).filter((tc) => PUZZLES.some((p) => p.tc === tc));
+  const saved = readLocal(SETTINGS_KEY, {});
+  const settings = {
+    markers: saved.markers || DATA.defaults.markers,
+    classes: saved.classes || (DATA.defaults.classes.length ? DATA.defaults.classes : presentClasses),
+    look: saved.look || DATA.defaults.look,
+    mode: saved.mode || DATA.defaults.mode,
+    order: saved.order || DATA.defaults.order,
+  };
+  const lookahead = () => (settings.look > MAX_LOOK ? null : Math.max(1, settings.look));
+
+  function matches(p, ignoreMarker) {
+    if (!ignoreMarker && !settings.markers.includes(p.m)) return false;
+    if (!settings.classes.includes(p.tc)) return false;
+    const last = history(p).last;
+    if (settings.mode === "unsolved" && last === "solved") return false;
+    if (settings.mode === "failed" && last !== "failed") return false;
+    const look = lookahead();
+    return look === null || p.vp <= 2 * look;
+  }
+  const stepsWithin = (p, look) => (look === null ? p.s : p.s.slice(0, Math.max(1, look)));
+  function difficulty(p, look) {
+    return [p.vp, stepsWithin(p, look).length, -p.s[0].ok.length, -p.d];
+  }
+  function cmp(a, b) {
+    for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return a[i] < b[i] ? -1 : 1;
+    return 0;
+  }
+  function query() {
+    const newest = PUZZLES.filter((p) => matches(p, false)).sort((a, b) =>
+      b.t - a.t || (a.url < b.url ? -1 : a.url > b.url ? 1 : 0) || a.ply - b.ply);
+    if (settings.order !== "easiest" && settings.order !== "hardest") return newest;
+    const look = lookahead();
+    const keyed = newest.map((p, i) => [difficulty(p, look), i, p]);
+    const sign = settings.order === "hardest" ? -1 : 1;
+    keyed.sort((x, y) => sign * cmp(x[0], y[0]) || x[1] - y[1]);
+    return keyed.map((k) => k[2]);
+  }
+
+  // ── Settings UI ────────────────────────────────────────────────────────────
+  function chip(container, value, label, checked, onChange) {
+    const id = container.id + "-" + value.replace(/[^a-z0-9]/gi, "_");
+    const lab = document.createElement("label");
+    lab.className = "chip";
+    lab.htmlFor = id;
+    const input = document.createElement("input");
+    input.type = "checkbox"; input.id = id; input.checked = checked;
+    input.addEventListener("change", () => onChange(input.checked));
+    const text = document.createElement("span");
+    text.textContent = label;
+    const n = document.createElement("span");
+    n.className = "n";
+    lab.append(input, text, n);
+    container.appendChild(lab);
+    return n;
+  }
+  function toggle(list, value, on) {
+    const set = new Set(list);
+    if (on) set.add(value); else set.delete(value);
+    return [...set];
+  }
+  const markerCounts = {};
+  DATA.markers.forEach(([m, label]) => {
+    markerCounts[m] = chip($("markers"), m, label, settings.markers.includes(m), (on) => {
+      settings.markers = toggle(settings.markers, m, on); settingsChanged();
+    });
+  });
+  const classCounts = {};
+  presentClasses.forEach((tc) => {
+    classCounts[tc] = chip($("classes"), tc, TC_LABELS[tc] || tc, settings.classes.includes(tc), (on) => {
+      settings.classes = toggle(settings.classes, tc, on); settingsChanged();
+    });
+  });
+  const look = $("look");
+  look.max = String(MAX_LOOK + 1);
+  look.value = String(settings.look);
+  look.addEventListener("input", () => { settings.look = +look.value; settingsChanged(); });
+  function fillSelect(sel, items, value) {
+    items.forEach(([v, label]) => { const o = document.createElement("option"); o.value = v; o.textContent = label; sel.appendChild(o); });
+    sel.value = value;
+  }
+  fillSelect($("mode"), DATA.modes, settings.mode);
+  fillSelect($("order"), DATA.orders, settings.order);
+  $("mode").addEventListener("change", (e) => { settings.mode = e.target.value; settingsChanged(); });
+  $("order").addEventListener("change", (e) => { settings.order = e.target.value; settingsChanged(); });
+
+  function refreshCounts() {
+    const l = lookahead();
+    $("look-value").textContent = l === null ? "Any depth" : `${l} move${l === 1 ? "" : "s"} (≈${2 * l} plies)`;
+    const byMarker = {};
+    const byClass = {};
+    for (const p of PUZZLES) {
+      if (matches(p, true)) byMarker[p.m] = (byMarker[p.m] || 0) + 1;
+      const saveClasses = settings.classes;
+      settings.classes = [p.tc];
+      if (matches(p, false)) byClass[p.tc] = (byClass[p.tc] || 0) + 1;
+      settings.classes = saveClasses;
+    }
+    for (const m in markerCounts) markerCounts[m].textContent = byMarker[m] || 0;
+    for (const tc in classCounts) classCounts[tc].textContent = byClass[tc] || 0;
+    const total = query().length;
+    $("count").textContent = `${total} puzzle${total === 1 ? "" : "s"} match`;
+  }
+  function settingsChanged() {
+    writeLocal(SETTINGS_KEY, settings);
+    refreshCounts();
+    $("start").textContent = S.puzzle ? "Restart with these settings" : "Start";
+  }
+
+  // ── Board model (positions come from the stored FENs; moves from the stored lists) ──
+  const sqIndex = (name) => FILES.indexOf(name[0]) + 8 * (+name[1] - 1);
+  const sqName = (i) => FILES[i % 8] + (Math.floor(i / 8) + 1);
+  const isWhite = (ch) => ch === ch.toUpperCase();
+  function parseFen(fen) {
+    const [placement, turn] = fen.split(" ");
+    const b = new Array(64).fill(null);
+    let r = 7, f = 0;
+    for (const ch of placement) {
+      if (ch === "/") { r--; f = 0; }
+      else if (/\d/.test(ch)) f += +ch;
+      else { b[r * 8 + f] = ch; f++; }
+    }
+    return { b, turn };
+  }
+  function applyUci(pos, uci) {
+    const b = pos.b.slice();
+    const from = sqIndex(uci.slice(0, 2)), to = sqIndex(uci.slice(2, 4));
+    let pc = b[from];
+    const moves = [{ from, to }];
+    if (!pc) return { pos, moves };
+    const white = isWhite(pc);
+    if ((pc === "K" || pc === "k") && Math.abs((to % 8) - (from % 8)) === 2) {
+      const base = Math.floor(from / 8) * 8;
+      const [rf, rt] = to % 8 === 6 ? [base + 7, base + 5] : [base, base + 3];
+      b[rt] = b[rf]; b[rf] = null;
+      moves.push({ from: rf, to: rt });
+    }
+    if ((pc === "P" || pc === "p") && from % 8 !== to % 8 && !b[to]) b[to + (white ? -8 : 8)] = null;
+    if (uci.length > 4) pc = white ? uci[4].toUpperCase() : uci[4].toLowerCase();
+    b[to] = pc; b[from] = null;
+    return { pos: { b, turn: pos.turn === "w" ? "b" : "w" }, moves };
+  }
+
+  // ── Board view ─────────────────────────────────────────────────────────────
+  const V = { pos: parseFen("8/8/8/8/8/8/8/8 w - - 0 1"), flipped: false, last: [], sel: null, targets: [], flash: {}, cells: [] };
+  function buildSquares() {
+    const el = $("squares");
+    el.textContent = "";
+    V.cells = new Array(64);
+    for (let row = 0; row < 8; row++) {
+      for (let col = 0; col < 8; col++) {
+        const file = V.flipped ? 7 - col : col;
+        const rank = V.flipped ? row : 7 - row;
+        const i = rank * 8 + file;
+        const cell = document.createElement("div");
+        cell.className = "sq " + ((file + rank) % 2 ? "l" : "d");
+        if (col === 0) { const c = document.createElement("span"); c.className = "coord r"; c.textContent = rank + 1; cell.appendChild(c); }
+        if (row === 7) { const c = document.createElement("span"); c.className = "coord f"; c.textContent = FILES[file]; cell.appendChild(c); }
+        V.cells[i] = cell;
+        el.appendChild(cell);
+      }
+    }
+  }
+  function xy(i) { const f = i % 8, r = Math.floor(i / 8); return V.flipped ? [7 - f, r] : [f, 7 - r]; }
+  function place(el, i) { const [c, r] = xy(i); el.style.transform = `translate(${c * 100}%, ${r * 100}%)`; }
+  const pieceEls = {};
+  function render(anim) {
+    const layer = $("pieces");
+    layer.textContent = "";
+    for (const k in pieceEls) delete pieceEls[k];
+    V.pos.b.forEach((ch, i) => {
+      if (!ch) return;
+      const el = document.createElement("div");
+      el.className = "pc";
+      el.style.backgroundImage = `url("${DATA.pieces[(isWhite(ch) ? "w" : "b") + ch.toUpperCase()]}")`;
+      const a = anim && anim.find((m) => m.to === i);
+      place(el, a ? a.from : i);
+      layer.appendChild(el);
+      pieceEls[i] = el;
+      if (a) requestAnimationFrame(() => requestAnimationFrame(() => { el.classList.add("moving"); place(el, i); }));
+    });
+    renderMarks();
+  }
+  function renderMarks() {
+    V.cells.forEach((cell, i) => {
+      cell.classList.toggle("last", V.last.includes(i));
+      cell.classList.toggle("sel", V.sel === i);
+      cell.classList.toggle("fb", V.flash[i] === "bad");
+      cell.classList.toggle("fg", V.flash[i] === "good");
+      const target = V.targets.includes(i);
+      cell.classList.toggle("dot", target && !V.pos.b[i]);
+      cell.classList.toggle("cap", target && !!V.pos.b[i]);
+    });
+  }
+  function flash(squares, kind, ms) {
+    squares.forEach((i) => { V.flash[i] = kind; });
+    renderMarks();
+    setTimeout(() => { squares.forEach((i) => { if (V.flash[i] === kind) delete V.flash[i]; }); renderMarks(); }, ms);
+  }
+  function playUci(uci, animate) {
+    const res = applyUci(V.pos, uci);
+    V.pos = res.pos;
+    V.last = [res.moves[0].from, res.moves[0].to];
+    V.sel = null; V.targets = [];
+    render(animate ? res.moves : null);
+  }
+
+  // ── Puzzle session ─────────────────────────────────────────────────────────
+  const S = { queue: [], pos: -1, puzzle: null, steps: [], step: 0, failed: false, recorded: false, finished: false, awaiting: false, token: 0, line: null };
+
+  function feedback(html, role) { const el = $("feedback"); el.innerHTML = html; el.dataset.role = role || "muted"; }
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  function numbered(fen, sans) {
+    const parts = fen.split(" ");
+    let white = parts[1] === "w";
+    let num = +parts[5] || 1;
+    const out = [];
+    sans.forEach((san, i) => {
+      if (white) out.push(`${num}. ${san}`);
+      else { out.push(i === 0 ? `${num}... ${san}` : san); num++; }
+      white = !white;
+    });
+    return out.join(" ");
+  }
+  const userTurn = () => S.puzzle && V.pos.turn === (S.puzzle.w ? "w" : "b");
+  const legalMoves = () => S.steps[S.step].mv.split(" ");
+
+  function start() {
+    S.queue = query();
+    S.pos = -1;
+    $("start").textContent = "Start";
+    next();
+  }
+  function next() {
+    if (!S.queue.length || S.pos + 1 >= S.queue.length) { S.queue = query(); S.pos = -1; }
+    if (!S.queue.length) { idle("No puzzles match these settings. Try a deeper lookahead, more severities or time controls, or Show: All puzzles."); return; }
+    S.pos += 1;
+    load(S.queue[S.pos], true);
+  }
+  function load(p, record) {
+    S.token += 1;
+    S.puzzle = p;
+    S.steps = stepsWithin(p, lookahead());
+    S.step = 0;
+    S.failed = false;
+    S.recorded = !record;
+    S.finished = false;
+    S.awaiting = false;
+    S.line = null;
+    if (V.flipped !== !p.w || !V.cells.length) { V.flipped = !p.w; buildSquares(); }
+    V.pos = parseFen(S.steps[0].f);
+    V.last = []; V.sel = null; V.targets = []; V.flash = {};
+    render(null);
+
+    const date = p.t ? new Date(p.t * 1000).toISOString().slice(0, 10) : "";
+    const rating = p.r ? ` (${p.r})` : "";
+    $("meta").innerHTML =
+      `<span class="marker" data-m="${esc(p.m)}">${esc(p.m)}</span>` +
+      `<span>Puzzle ${S.pos + 1} of ${S.queue.length}</span>` +
+      `<span>vs ${esc(p.opp)}${esc(rating)}</span>` +
+      `<span>${esc(TC_LABELS[p.tc] || p.tc)}</span>` +
+      (date ? `<span>${date}</span>` : "") +
+      `<a href="${esc(p.url)}" target="_blank" rel="noopener">Open game</a>`;
+    const side = p.w ? "White" : "Black";
+    const length = S.steps.length === 1 ? "" : ` The line is ${S.steps.length} moves long.`;
+    $("prompt").innerHTML = `You played <b>${esc(p.lab)}</b> here. Find a better move (${side} to move).${length}`;
+    S.practice = !record;
+    renderHistory();
+    $("explain").textContent = "";
+    $("linebox").hidden = true;
+    feedback(`Your move. Tap a piece, then where it goes, or drag it.`, "muted");
+    updateButtons();
+  }
+  function renderHistory() {
+    const p = S.puzzle;
+    if (!p) return;
+    const moves = p.vp / 2;
+    const h = history(p);
+    $("history").textContent = `Punishment visible about ${moves} move${moves === 1 ? "" : "s"} ahead · history: ${h.solved} solved, ${h.failed} missed` +
+      (S.practice ? " · practice run, not recorded" : "");
+  }
+  function idle(message) {
+    S.puzzle = null;
+    $("meta").innerHTML = "<span>No puzzle open</span>";
+    $("prompt").textContent = message;
+    $("history").textContent = "";
+    $("explain").textContent = "";
+    $("linebox").hidden = true;
+    feedback("", "muted");
+    if (!V.cells.length) buildSquares();
+    V.pos = parseFen("8/8/8/8/8/8/8/8 w - - 0 1");
+    V.last = []; V.sel = null; V.targets = [];
+    render(null);
+    updateButtons();
+  }
+  function updateButtons() {
+    const open = !!S.puzzle;
+    const playing = open && !S.finished;
+    $("hint").disabled = !playing;
+    $("solution").disabled = !playing;
+    $("retry").disabled = !open;
+  }
+  function miss() { if (!S.failed) { S.failed = true; record(false); } }
+  function record(solved) {
+    if (S.recorded || !S.puzzle) return;
+    S.recorded = true;
+    Progress.record(S.puzzle.id, solved);
+    refreshCounts();
+    renderHistory();
+  }
+  function lineAfter(index) {
+    const st = S.puzzle.s, u = [], s = [];
+    for (let j = index; j < st.length; j++) {
+      if (j > index) { u.push(st[j].b); s.push(st[j].bs); }
+      if (st[j].r == null) { u.push(...S.puzzle.c); s.push(...S.puzzle.cs); break; }
+      u.push(st[j].r); s.push(st[j].rs);
+    }
+    return { u, s };
+  }
+  function offerLine(line) {
+    if (!line.u.length) return;
+    S.line = { u: line.u, startFen: null, pos: V.pos };
+    // Move numbers: the line starts with the opponent to move.
+    const parts = S.steps[Math.min(S.step, S.steps.length - 1)].f.split(" ");
+    const fen = `x ${V.pos.turn} - - 0 ${(+parts[5] || 1) + (parts[1] === "b" ? 1 : 0)}`;
+    $("line-san").textContent = "Engine line: " + numbered(fen, line.s);
+    $("linebox").hidden = false;
+  }
+  function solve(text, explain, showLine) {
+    S.finished = true;
+    record(!S.failed);
+    feedback(text, "good");
+    $("explain").textContent = explain || "";
+    if (showLine) offerLine(lineAfter(S.step));
+    updateButtons();
+  }
+  function submit(uci) {
+    const step = S.steps[S.step];
+    const from = sqIndex(uci.slice(0, 2)), to = sqIndex(uci.slice(2, 4));
+    if (!step.ok.includes(uci)) {
+      miss();
+      V.sel = null; V.targets = [];
+      render(null);
+      flash([from, to], "bad", 700);
+      feedback("Not quite. Try again.", "bad");
+      return;
+    }
+    playUci(uci, true);
+    const last = S.step + 1 >= S.steps.length || step.r == null;
+    if (uci === step.b && !last) {
+      S.awaiting = true;
+      feedback("Good. Keep going.", "good");
+      const tok = S.token;
+      setTimeout(() => {
+        if (tok !== S.token) return;
+        S.step += 1;
+        S.awaiting = false;
+        playUci(step.r, true);
+        feedback(`They reply ${esc(step.rs)}. Your move.`, "muted");
+        updateButtons();
+      }, REPLY_MS);
+      return;
+    }
+    const p = S.puzzle;
+    if (uci === step.b) solve(S.failed ? "Correct." : `Correct! (You played ${esc(p.ps)} in the game.)`, step.x, true);
+    else solve(`Good move! The engine preferred ${esc(step.bs)}.`, step.x ? `${step.bs}: ${step.x}` : "", false);
+  }
+  function hint() {
+    if (!S.puzzle || S.finished || S.awaiting) return;
+    miss();
+    const best = S.steps[S.step].b;
+    const from = sqIndex(best.slice(0, 2));
+    const ch = V.pos.b[from];
+    flash([from], "good", 1500);
+    feedback(`Hint: move your ${PIECE_NAMES[(ch || "p").toLowerCase()]} on ${best.slice(0, 2)}.`, "warn");
+  }
+  function showSolution() {
+    if (!S.puzzle || S.finished || S.awaiting) return;
+    miss();
+    S.finished = true;
+    const moves = [], sans = [];
+    for (let j = S.step; j < S.steps.length; j++) {
+      moves.push(S.steps[j].b); sans.push(S.steps[j].bs);
+      if (S.steps[j].r != null && j + 1 < S.steps.length) { moves.push(S.steps[j].r); sans.push(S.steps[j].rs); }
+    }
+    const fen = S.steps[S.step].f;
+    feedback(`Solution: <span class="line">${esc(numbered(fen, sans))}</span>`, "warn");
+    $("explain").textContent = S.steps[S.step].x || "";
+    const tok = S.token;
+    const lastStep = S.steps.length - 1;
+    const play = (i) => {
+      if (tok !== S.token) return;
+      if (i >= moves.length) { S.step = lastStep; offerLine(lineAfter(lastStep)); return; }
+      playUci(moves[i], true);
+      setTimeout(() => play(i + 1), REPLY_MS);
+    };
+    play(0);
+    updateButtons();
+  }
+  function playLine() {
+    if (!S.line) return;
+    const tok = S.token;
+    V.pos = S.line.pos;
+    render(null);
+    const u = S.line.u;
+    const play = (i) => {
+      if (tok !== S.token || i >= u.length) return;
+      playUci(u[i], true);
+      setTimeout(() => play(i + 1), REPLY_MS);
+    };
+    play(0);
+  }
+
+  // ── Input: tap-tap or drag ─────────────────────────────────────────────────
+  const boardEl = $("board");
+  let drag = null;
+  function squareAt(e) {
+    const r = boardEl.getBoundingClientRect();
+    const c = Math.floor(((e.clientX - r.left) / r.width) * 8);
+    const row = Math.floor(((e.clientY - r.top) / r.height) * 8);
+    if (c < 0 || c > 7 || row < 0 || row > 7) return null;
+    const file = V.flipped ? 7 - c : c;
+    const rank = V.flipped ? row : 7 - row;
+    return rank * 8 + file;
+  }
+  function targetsFrom(i) {
+    const name = sqName(i);
+    return [...new Set(legalMoves().filter((u) => u.startsWith(name)).map((u) => sqIndex(u.slice(2, 4))))];
+  }
+  const canMove = () => S.puzzle && !S.finished && !S.awaiting && userTurn();
+  function select(i) { V.sel = i; V.targets = i === null ? [] : targetsFrom(i); renderMarks(); }
+  function attempt(from, to) {
+    const prefix = sqName(from) + sqName(to);
+    const options = legalMoves().filter((u) => u.slice(0, 4) === prefix);
+    if (!options.length) return false;
+    if (options.length === 1) { submit(options[0]); return true; }
+    promote(options);
+    return true;
+  }
+  function promote(options) {
+    const white = S.puzzle.w;
+    const box = document.createElement("div");
+    box.className = "promo";
+    ["q", "r", "b", "n"].forEach((k) => {
+      const uci = options.find((u) => u[4] === k);
+      if (!uci) return;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.setAttribute("aria-label", "Promote to " + PIECE_NAMES[k]);
+      btn.style.backgroundImage = `url("${DATA.pieces[(white ? "w" : "b") + k.toUpperCase()]}")`;
+      btn.addEventListener("click", () => { box.remove(); submit(uci); });
+      box.appendChild(btn);
+    });
+    box.addEventListener("click", (e) => { if (e.target === box) { box.remove(); select(null); } });
+    $("frame").appendChild(box);
+  }
+  boardEl.addEventListener("pointerdown", (e) => {
+    if (!canMove()) return;
+    const i = squareAt(e);
+    if (i === null) return;
+    if (V.sel !== null && V.targets.includes(i)) { attempt(V.sel, i); return; }
+    const ch = V.pos.b[i];
+    if (ch && isWhite(ch) === S.puzzle.w && targetsFrom(i).length) {
+      select(i);
+      const el = pieceEls[i];
+      if (el) {
+        drag = { from: i, el, id: e.pointerId, moved: false, x: e.clientX, y: e.clientY };
+        boardEl.setPointerCapture(e.pointerId);
+      }
+    } else {
+      select(null);
+    }
+  });
+  boardEl.addEventListener("pointermove", (e) => {
+    if (!drag || e.pointerId !== drag.id) return;
+    if (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 6) return;
+    drag.moved = true;
+    const r = boardEl.getBoundingClientRect();
+    const size = r.width / 8;
+    drag.el.classList.remove("moving");
+    drag.el.classList.add("dragging");
+    drag.el.style.transform = `translate(${e.clientX - r.left - size / 2}px, ${e.clientY - r.top - size / 2}px)`;
+  });
+  function endDrag(e, cancelled) {
+    if (!drag || e.pointerId !== drag.id) return;
+    const d = drag;
+    drag = null;
+    d.el.classList.remove("dragging");
+    if (!d.moved) return;  // a tap: keep the selection for tap-tap
+    const to = cancelled ? null : squareAt(e);
+    if (to !== null && to !== d.from && V.targets.includes(to) && attempt(d.from, to)) return;
+    place(d.el, d.from);
+  }
+  boardEl.addEventListener("pointerup", (e) => endDrag(e, false));
+  boardEl.addEventListener("pointercancel", (e) => endDrag(e, true));
+
+  $("hint").addEventListener("click", hint);
+  $("solution").addEventListener("click", showSolution);
+  $("retry").addEventListener("click", () => { if (S.puzzle) load(S.puzzle, false); });
+  $("next").addEventListener("click", next);
+  $("start").addEventListener("click", start);
+  $("play-line").addEventListener("click", playLine);
+
+  // ── Boot ───────────────────────────────────────────────────────────────────
+  if (DATA.user) $("who").textContent = "· " + DATA.user;
+  const exported = new Date(DATA.exported * 1000).toISOString().slice(0, 10);
+  $("footer").innerHTML = `${PUZZLES.length} puzzles from ChessAnalyzer, exported ${exported}. ` +
+    `Pieces by Colin M.L. Burnett, <a href="https://creativecommons.org/licenses/by-sa/3.0/" target="_blank" rel="noopener">CC BY-SA 3.0</a>.`;
+  Progress.onChange(() => {
+    refreshCounts();
+    renderHistory();
+  });
+  buildSquares();
+  refreshCounts();
+  start();
+  Progress.connect();
+})();
+</script>

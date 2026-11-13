@@ -82,6 +82,18 @@ how big the mistake was (a bigger blunder is easier to spot).
 
 Puzzles and results are stored in `puzzles.json` in the data directory.
 
+### On a phone
+
+**Export for phone** (in the Practice box) writes `phone_puzzles.html` to the data directory: one
+self-contained web page with every puzzle, for any phone browser. It has the same severity,
+time-control, lookahead, show and order settings, multi-move lines, hints, solutions and retry,
+with tap-to-move or drag. The page needs no engine: each puzzle carries its legal moves and the
+accepted answers from the scan. Results on the phone are kept by the page (in the browser, or in
+the artifact's database when the page is published as a claude.ai Artifact) and added to the
+history exported from the PC. From the command line:
+`python -m chess_analyzer.phone_export [out.html]` (`--artifact` writes the body-only form the
+Artifact publisher wraps itself).
+
 ## Requirements
 
 - Python 3.11 or newer
@@ -198,6 +210,7 @@ libraries must be installed — see `.github/workflows/ci.yml`). Layout:
 | `lichess_api.py`, `opening_insights.py` | Lichess client; the Insights crawl and statistics |
 | `chesscom_api.py`, `game_library.py` | chess.com API client; the downloaded games, kept on disk and refreshed month by month |
 | `puzzles.py`, `puzzle_scan.py` | the puzzle model, answer rules and store; the mistake scanner |
+| `phone_export.py`, `phone/puzzles.html` | the phone puzzle page and its exporter |
 | `board_image.py`, `pieces.py`, `theme.py` | Save Image rendering, piece images, the colour palette |
 
 ## Dependencies and credits

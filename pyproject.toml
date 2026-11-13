@@ -48,7 +48,7 @@ version = { attr = "chess_analyzer.__version__" }
 include = ["chess_analyzer*"]
 
 [tool.setuptools.package-data]
-chess_analyzer = ["assets/pieces/*.png", "assets/pieces/*.md"]
+chess_analyzer = ["assets/pieces/*.png", "assets/pieces/*.md", "phone/*.html"]
 
 [tool.ruff]
 line-length = 100

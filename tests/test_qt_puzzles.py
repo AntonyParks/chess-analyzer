@@ -12,7 +12,7 @@ from fakes import FakeEngine  # noqa: E402
 from PySide6.QtCore import QCoreApplication  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
-from chess_analyzer import config  # noqa: E402
+from chess_analyzer import config, phone_export  # noqa: E402
 from chess_analyzer.engine_worker import EngineWorker  # noqa: E402
 from chess_analyzer.pieces import PieceImages  # noqa: E402
 from chess_analyzer.puzzles import Puzzle, PuzzleStep  # noqa: E402
@@ -279,3 +279,13 @@ def test_download_scan_then_refresh_fetches_only_new_months(window):
 
     panel._scan()
     assert wait_until(lambda: not panel.scanning and "Up to date" in panel._scan_status.text())
+
+
+def test_export_for_phone_writes_the_page(window, tmp_path, monkeypatch):
+    out = tmp_path / "phone" / "phone_puzzles.html"
+    monkeypatch.setattr(phone_export, "phone_page_path", lambda: out)
+    panel = window._puzzles
+    panel._store.add(make_puzzle())
+    panel._phone_btn.click()
+    assert out.exists() and "Mistake Puzzles" in out.read_text(encoding="utf-8")
+    assert "Wrote 1 puzzles" in panel._phone_status.text()

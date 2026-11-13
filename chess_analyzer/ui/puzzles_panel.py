@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import config, move_explain, theme
+from .. import config, move_explain, phone_export, theme
 from ..chesscom_api import (
     TIME_CLASS_LABELS,
     TIME_CLASSES,
@@ -244,7 +244,42 @@ class PuzzlesPanel(QWidget):
         row.addWidget(self._count, 1)
         row.addWidget(self._start_btn)
         layout.addLayout(row)
+
+        phone = QHBoxLayout()
+        self._phone_btn = QPushButton("Export for phone")
+        self._phone_btn.setToolTip(
+            "Write every puzzle into one web page you can open on a phone: the same filters, "
+            "lookahead, ordering and multi-move lines, with no engine needed."
+        )
+        self._phone_btn.clicked.connect(self.export_phone)
+        self._phone_status = QLabel("")
+        self._phone_status.setWordWrap(True)
+        self._phone_status.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        set_role(self._phone_status, "muted")
+        phone.addWidget(self._phone_btn)
+        phone.addWidget(self._phone_status, 1)
+        layout.addLayout(phone)
         return box
+
+    def export_phone(self) -> None:
+        """Write the phone page (the current practice settings are its starting filters)."""
+        defaults = phone_export.PhoneDefaults(
+            markers=tuple(m for m, box in self._marker_boxes.items() if box.isChecked()) or MARKERS,
+            lookahead=self._lookahead.value(),
+            mode=str(self._mode.currentData()),
+            order=str(self._order.currentData()),
+        )
+        path = phone_export.phone_page_path()
+        try:
+            count = phone_export.export_html(
+                self._store, path, username=self._cfg.chesscom_username, defaults=defaults
+            )
+        except OSError as exc:
+            self._phone_status.setText(f"Could not write the phone page: {exc}")
+            return
+        self._phone_status.setText(
+            f"Wrote {count} puzzles to {path}. Copy it to your phone and open it in Chrome."
+        )
 
     def _build_puzzle_box(self) -> QGroupBox:
         box = QGroupBox("Puzzle")
