@@ -39,6 +39,32 @@ continuations.*
   recent files are remembered
 - Stockfish 19 **downloads automatically** on first run
 
+## Opening repertoire
+
+Open the **Repertoire** tab (F8) and pick White or Black. Play a line on the board and press
+**Add line to here** (or select a move in the table and press **Add selected move**). From your
+own positions the repertoire keeps one move; from your opponent's, as many prepared replies as
+you like. Positions are stored once however they are reached, so move orders that transpose
+share their continuation.
+
+- **Candidate table:** every move Lichess players play here (at the ratings you tick, 1000 and
+  up) with game counts, the share of games, White/Draw/Black results, and Stockfish's
+  evaluation from the board's own analysis, plus the engine's best moves that the explorer
+  doesn't list. The **Repertoire** column marks ★ your move, ✓ a prepared reply,
+  ↪ *joins …* when a move reaches one of your lines by another move order, and ⚠ *gap* when an
+  unprepared reply comes up in at least 1 game in N (the coverage setting).
+- **Go to biggest gap** loads the likeliest position your repertoire doesn't answer. Coverage
+  counts for your lines are fetched from Lichess in the background and kept in the file.
+- **Train due / Practise all:** spaced repetition per position. New moves are shown with an
+  arrow first; then the app plays lines from move 1, choosing the opponent's replies weighted by
+  how often they are played, and steering toward the positions that are due. A wrong move is a
+  miss (asked again at the end of the session); a second wrong try shows the arrow. Right
+  answers come back after 1 day, 3 days, then longer intervals.
+- **Check my games** lists where your downloaded chess.com games (Puzzles tab) first left the
+  repertoire, yours or your opponent's move, most frequent first; click a row to see it.
+
+The repertoire and review schedule are stored in `repertoire.json` in the data directory.
+
 ## Puzzles from your games
 
 Open the **Puzzles** tab (F7), enter your chess.com username, tick the time controls and
@@ -211,6 +237,7 @@ libraries must be installed — see `.github/workflows/ci.yml`). Layout:
 | `chesscom_api.py`, `game_library.py` | chess.com API client; the downloaded games, kept on disk and refreshed month by month |
 | `puzzles.py`, `puzzle_scan.py` | the puzzle model, answer rules and store; the mistake scanner |
 | `phone_export.py`, `phone/puzzles.html` | the phone puzzle page and its exporter |
+| `repertoire.py`, `ui/repertoire_panel.py` | the repertoire graph, coverage, review schedule and trainer; its tab |
 | `board_image.py`, `pieces.py`, `theme.py` | Save Image rendering, piece images, the colour palette |
 
 ## Dependencies and credits

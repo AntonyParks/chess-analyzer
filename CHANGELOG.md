@@ -3,6 +3,12 @@
 ## Unreleased
 
 ### Added
+- **Opening repertoire** (a new **Repertoire** tab, F8): build a White and a Black repertoire on
+  the board with Lichess game counts and Stockfish evaluations for every candidate move;
+  transpositions marked (↪ joins …); coverage gaps flagged and **Go to biggest gap**; spaced-
+  repetition training with opponent replies weighted by real games; **Check my games** finds
+  where your chess.com games left the repertoire. Stored in `repertoire.json`.
+- Lichess rating filters now include 1000, 1200 and 1400.
 - **Puzzles from your games** (a new **Puzzles** tab, F7): downloads your recent chess.com
   games (public API, no login), finds the moves where you gave up winning chances and turns
   each into a puzzle where you look for the better move. Severity filters (blunders,

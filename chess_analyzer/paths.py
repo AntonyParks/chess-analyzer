@@ -69,6 +69,10 @@ def games_path(base: Path | None = None) -> Path:
     return (base or user_data_dir()) / "chesscom_games.json"
 
 
+def repertoire_path(base: Path | None = None) -> Path:
+    return (base or user_data_dir()) / "repertoire.json"
+
+
 def logs_dir(base: Path | None = None) -> Path:
     return (base or user_data_dir()) / "logs"
 

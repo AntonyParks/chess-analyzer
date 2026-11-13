@@ -56,6 +56,10 @@ class AppConfig:
     puzzle_lookahead: int = 5  # moves; PUZZLE_ANY_LOOKAHEAD = no limit
     puzzle_mode: str = "unsolved"  # "all" | "unsolved" | "failed"
     puzzle_order: str = "easiest"  # "newest" | "easiest" | "hardest"
+    # Opening repertoire
+    repertoire_color: str = "white"  # "white" | "black"
+    repertoire_ratings: list[int] = field(default_factory=lambda: [1200, 1400, 1600])
+    repertoire_coverage: int = 50  # flag replies reached in at least 1 game in this many
     extra: dict[str, Any] = field(default_factory=dict)  # unknown keys, preserved on save
 
 
@@ -98,6 +102,9 @@ def from_dict(raw: dict[str, Any]) -> AppConfig:
     cfg.depth = max(MIN_DEPTH, min(MAX_DEPTH, cfg.depth))
     cfg.puzzle_depth = max(PUZZLE_MIN_DEPTH, min(PUZZLE_MAX_DEPTH, cfg.puzzle_depth))
     cfg.puzzle_lookahead = max(1, min(PUZZLE_ANY_LOOKAHEAD, cfg.puzzle_lookahead))
+    cfg.repertoire_coverage = max(5, min(1000, cfg.repertoire_coverage))
+    if cfg.repertoire_color not in ("white", "black"):
+        cfg.repertoire_color = "white"
     if cfg.puzzle_mode not in ("all", "unsolved", "failed"):
         cfg.puzzle_mode = "unsolved"
     if cfg.puzzle_order not in ("newest", "easiest", "hardest"):

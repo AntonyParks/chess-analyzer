@@ -40,6 +40,7 @@ from ..lichess_api import LichessClient
 from ..opening_insights import InsightsWorker
 from ..pieces import PieceImages
 from ..puzzles import PuzzleStore
+from ..repertoire import RepertoireStore
 from .board_widget import BoardWidget
 from .dispatcher import QtDispatcher
 from .engine_lines import EngineLinesPanel
@@ -49,6 +50,7 @@ from .insights_panel import InsightsPanel
 from .moves_panel import MovesPanel
 from .piece_pixmaps import PiecePixmaps
 from .puzzles_panel import PuzzlesPanel
+from .repertoire_panel import RepertoirePanel
 from .review_panel import ReviewPanel
 from .settings_dialog import SettingsDialog
 from .style import set_role
@@ -58,7 +60,7 @@ log = logging.getLogger(__name__)
 APP_TITLE = "Chess Analyzer"
 PGN_FILTER = "PGN files (*.pgn);;All files (*)"
 MAX_RECENT = 8
-TAB_MOVES, TAB_EXPLORER, TAB_INSIGHTS, TAB_REVIEW, TAB_PUZZLES = range(5)
+TAB_MOVES, TAB_EXPLORER, TAB_INSIGHTS, TAB_REVIEW, TAB_PUZZLES, TAB_REPERTOIRE = range(6)
 
 
 class MainWindow(QMainWindow):
@@ -95,7 +97,9 @@ class MainWindow(QMainWindow):
         self._insights_worker = InsightsWorker(self._lichess, self._dispatcher)
         self._puzzle_store = PuzzleStore(paths.puzzles_path(self._data_dir))
         self._game_library = GameLibrary(paths.games_path(self._data_dir))
+        self._repertoire_store = RepertoireStore(paths.repertoire_path(self._data_dir))
         self._puzzle_active = False
+        self._mode_owner: QWidget | None = None  # the panel that put the board in puzzle mode
         self._saved_state: GameState | None = None  # the user's game while a puzzle is up
 
         self.setWindowTitle(APP_TITLE)
@@ -151,6 +155,9 @@ class MainWindow(QMainWindow):
         )
         self.act_puzzles = action(
             "&Puzzles from my games", lambda: self._tabs.setCurrentIndex(TAB_PUZZLES), "F7"
+        )
+        self.act_repertoire = action(
+            "Opening &repertoire", lambda: self._tabs.setCurrentIndex(TAB_REPERTOIRE), "F8"
         )
         self.act_settings = action("&Settings…", self._open_settings, "Ctrl+,")
         self.act_about = action("&About", self._about)
@@ -216,6 +223,19 @@ class MainWindow(QMainWindow):
             enter_mode=self._enter_puzzle_mode,
         )
         self._tabs.addTab(self._puzzles, "Puzzles")
+        self._repertoire = RepertoirePanel(
+            cfg=self._cfg,
+            store=self._repertoire_store,
+            client=self._lichess,
+            library=self._game_library,
+            board=self._board,
+            dispatcher=self._dispatcher,
+            save_config=self._save_config,
+            enter_mode=lambda: self._enter_puzzle_mode(self._repertoire),
+            exit_mode=self._exit_puzzle_mode,
+        )
+        self._repertoire.settingsRequested.connect(self._open_settings)
+        self._tabs.addTab(self._repertoire, "Repertoire")
         self._tabs.currentChanged.connect(self._on_tab_changed)
         self._engine_lines = EngineLinesPanel(self._board)
 
@@ -278,6 +298,7 @@ class MainWindow(QMainWindow):
         analysis_menu.addAction(self.act_insights)
         analysis_menu.addSeparator()
         analysis_menu.addAction(self.act_puzzles)
+        analysis_menu.addAction(self.act_repertoire)
 
         help_menu = bar.addMenu("&Help")
         help_menu.addAction(self.act_about)
@@ -460,6 +481,7 @@ class MainWindow(QMainWindow):
         self._engine_lines.clear_selection()
         self._refresh_views()
         self._explorer.on_navigate()
+        self._repertoire.on_navigate()
         if self._runner is None or not self._runner.running:
             self._engine_lines.refresh()
         self._update_nav_actions()
@@ -469,6 +491,7 @@ class MainWindow(QMainWindow):
             return
         self._refresh_views()
         self._explorer.on_evals_updated()
+        self._repertoire.on_evals_updated()
         if complete and (self._runner is None or not self._runner.running):
             self._engine_lines.refresh()
         if self._worker is not None and self._worker.engine_name:
@@ -523,18 +546,20 @@ class MainWindow(QMainWindow):
         self._opening_label.setText(text)
 
     def _on_tab_changed(self, index: int) -> None:
-        if index != TAB_PUZZLES:
+        if self._puzzle_active and self._tabs.widget(index) is not self._mode_owner:
             self._exit_puzzle_mode()
-        else:
+        if index == TAB_PUZZLES:
             self._puzzles.refresh()
         self._explorer.set_active(index == TAB_EXPLORER)
+        self._repertoire.set_active(index == TAB_REPERTOIRE)
 
     # ── Puzzle mode ───────────────────────────────────────────────────────────
 
-    def _enter_puzzle_mode(self) -> None:
+    def _enter_puzzle_mode(self, owner: QWidget | None = None) -> None:
         """Give the board a separate game for puzzles and hide every engine score."""
         if self._puzzle_active:
             return
+        self._mode_owner = owner if owner is not None else self._puzzles
         if self._runner is not None:
             self._runner.cancel()
         self._puzzle_active = True
@@ -552,7 +577,9 @@ class MainWindow(QMainWindow):
         """Put the user's game (with its analysis) back on the board."""
         if not self._puzzle_active:
             return
-        self._puzzles.end_session()
+        owner, self._mode_owner = self._mode_owner, None
+        if owner is not None:
+            owner.end_session()  # type: ignore[attr-defined]
         self._board.set_move_interceptor(None)
         self._board.clear_pv()
         self._puzzle_active = False
@@ -773,6 +800,7 @@ class MainWindow(QMainWindow):
         self._save_config()
         if changed["token"]:
             self._explorer.token_changed()
+            self._repertoire.token_changed()
         if changed["engine"]:
             self.statusBar().showMessage("Engine settings apply after a restart", 4000)
 
@@ -812,6 +840,7 @@ class MainWindow(QMainWindow):
         self._save_config()
         self._insights_worker.stop()
         self._puzzles.shutdown()
+        self._repertoire.shutdown()
         for worker in (self._worker, self._ladder_worker):
             if worker is not None:
                 worker.shutdown()

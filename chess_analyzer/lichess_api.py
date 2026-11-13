@@ -36,7 +36,7 @@ SPEED_LABELS = {
     "correspondence": "Corr.",
 }
 RATING_BUCKETS = (0, 1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500)
-RATING_CHOICES = (1600, 1800, 2000, 2200, 2500)  # the ones the UI offers
+RATING_CHOICES = (1000, 1200, 1400, 1600, 1800, 2000, 2200, 2500)  # the ones the UI offers
 DEFAULT_TIMEOUT = 15.0
 RATE_LIMIT_WAIT = 60.0
 
