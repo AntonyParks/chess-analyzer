@@ -344,7 +344,7 @@ footer a { color: inherit; }
 
   // ── Settings UI ────────────────────────────────────────────────────────────
   function chip(container, value, label, checked, onChange) {
-    const id = container.id + "-" + value.replace(/[^a-z0-9]/gi, "_");
+    const id = container.id + "-" + container.children.length;  // unique: "??" and "?!" must not collide
     const lab = document.createElement("label");
     lab.className = "chip";
     lab.htmlFor = id;
@@ -409,7 +409,7 @@ footer a { color: inherit; }
   function settingsChanged() {
     writeLocal(SETTINGS_KEY, settings);
     refreshCounts();
-    $("start").textContent = S.puzzle ? "Restart with these settings" : "Start";
+    S.stale = true;  // the next puzzle comes from the new settings
   }
 
   // ── Board model (positions come from the stored FENs; moves from the stored lists) ──
@@ -533,11 +533,18 @@ footer a { color: inherit; }
   function start() {
     S.queue = query();
     S.pos = -1;
-    $("start").textContent = "Start";
+    S.stale = false;
     next();
   }
   function next() {
-    if (!S.queue.length || S.pos + 1 >= S.queue.length) { S.queue = query(); S.pos = -1; }
+    if (S.stale || !S.queue.length || S.pos + 1 >= S.queue.length) {
+      // A rebuilt queue skips the puzzle on the board, so Next always moves on.
+      const fresh = query();
+      const others = fresh.filter((p) => p !== S.puzzle);
+      S.queue = others.length ? others : fresh;
+      S.pos = -1;
+      S.stale = false;
+    }
     if (!S.queue.length) { idle("No puzzles match these settings. Try a deeper lookahead, more severities or time controls, or Show: All puzzles."); return; }
     S.pos += 1;
     load(S.queue[S.pos], true);
