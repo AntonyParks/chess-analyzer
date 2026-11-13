@@ -58,6 +58,7 @@ class AppConfig:
     puzzle_order: str = "easiest"  # "newest" | "easiest" | "hardest"
     # Opening repertoire
     repertoire_color: str = "white"  # "white" | "black"
+    repertoire_id: str = ""  # the repertoire being built or trained ("" = first of the colour)
     repertoire_ratings: list[int] = field(default_factory=lambda: [1200, 1400, 1600])
     repertoire_coverage: int = 50  # flag replies reached in at least 1 game in this many
     extra: dict[str, Any] = field(default_factory=dict)  # unknown keys, preserved on save

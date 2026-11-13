@@ -41,7 +41,9 @@ continuations.*
 
 ## Opening repertoire
 
-Open the **Repertoire** tab (F8) and pick White or Black. Play a line on the board and press
+Open the **Repertoire** tab (F8) and pick a repertoire. You can keep any number of named
+repertoires for each colour: **New…**, **Rename…**, **Duplicate** (a full copy to experiment
+with) and **Delete…** sit next to the picker. Play a line on the board and press
 **Add line to here** (or select a move in the table and press **Add selected move**). From your
 own positions the repertoire keeps one move; from your opponent's, as many prepared replies as
 you like. Positions are stored once however they are reached, so move orders that transpose
@@ -60,10 +62,14 @@ share their continuation.
   how often they are played, and steering toward the positions that are due. A wrong move is a
   miss (asked again at the end of the session); a second wrong try shows the arrow. Right
   answers come back after 1 day, 3 days, then longer intervals.
+- **Editing:** right-click a move in the lines tree (or select it and press Delete) to remove it
+  and whatever only it leads to; **Undo** puts it back. To change one of your moves, play the
+  new one and press **Add line to here**: it asks before replacing the old one.
 - **Check my games** lists where your downloaded chess.com games (Puzzles tab) first left the
   repertoire, yours or your opponent's move, most frequent first; click a row to see it.
 
-The repertoire and review schedule are stored in `repertoire.json` in the data directory.
+The repertoires and review schedules are stored in `repertoire.json` in the data directory (the
+same format the web version imports; older single White/Black files still load).
 
 ## Puzzles from your games
 

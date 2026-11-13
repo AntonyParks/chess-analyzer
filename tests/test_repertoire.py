@@ -1,3 +1,4 @@
+import json
 import random
 
 import chess
@@ -171,19 +172,80 @@ def test_check_game_finds_first_deviation():
     assert me.by_user and me.played_san == "Nf3" and me.expected_san == "c4"
 
 
-def test_store_round_trip_and_corrupt_file(tmp_path):
+def test_store_starts_with_one_repertoire_per_colour(tmp_path):
+    store = rp.RepertoireStore(tmp_path / "repertoire.json")
+    assert [(e.name, e.color) for e in store.entries] == [
+        ("White repertoire", chess.WHITE),
+        ("Black repertoire", chess.BLACK),
+    ]
+
+
+def test_store_round_trips_named_repertoires_and_backs_up_corrupt_files(tmp_path):
     path = tmp_path / "repertoire.json"
     store = rp.RepertoireStore(path)
-    store.white.add_line(chess.Board(), line("e4", "e5", "Nf3"))
-    store.white.record_stats(epd_after("e4"), 10, [("e7e5", "e5", 7)])
-    store.white.grade(rp.ROOT_EPD, True, now=0)
-    store.black.add_line(chess.Board(), line("e4", "c5"))
+    store.entries = []
+    sharp = store.create("  Sharp   e4 ", chess.WHITE)
+    quiet = store.create("", chess.WHITE)
+    najdorf = store.create("Najdorf", chess.BLACK)
+    assert sharp.name == "Sharp e4" and quiet.name == "White repertoire"
+    sharp.rep.add_line(chess.Board(), line("e4", "e5", "Nf3"))
+    sharp.rep.record_stats(epd_after("e4"), 10, [("e7e5", "e5", 7)])
+    sharp.rep.grade(rp.ROOT_EPD, True, now=0)
+    quiet.rep.add_line(chess.Board(), line("d4", "d5", "c4"))
+    najdorf.rep.add_line(chess.Board(), line("e4", "c5"))
+    store.rename(quiet.id, "Queen's Gambit")
     store.save()
+
     again = rp.RepertoireStore(path)
-    assert again.white.user_move(rp.ROOT_EPD) == "e2e4"
-    assert again.white.cards[rp.ROOT_EPD].interval == 1
-    assert again.white.stats[epd_after("e4")].games("e7e5") == 7
-    assert again.black.user_move(epd_after("e4")) == "c7c5"
+    assert [(e.id, e.name, e.color) for e in again.entries] == [
+        (e.id, e.name, e.color) for e in store.entries
+    ]
+    s2 = again.find(sharp.id).rep
+    assert s2.user_move(rp.ROOT_EPD) == "e2e4"
+    assert s2.cards[rp.ROOT_EPD].interval == 1
+    assert s2.stats[epd_after("e4")].games("e7e5") == 7
+    assert again.find(quiet.id).rep.user_move(rp.ROOT_EPD) == "d2d4"
+    assert again.find(najdorf.id).rep.user_move(epd_after("e4")) == "c7c5"
+
     path.write_text("{oops", encoding="utf-8")
-    assert rp.RepertoireStore(path).white.size() == 0
+    assert [e.rep.size() for e in rp.RepertoireStore(path).entries] == [0, 0]
     assert (tmp_path / "repertoire.json.bak").exists()
+
+
+def test_store_duplicate_restore_remove(tmp_path):
+    store = rp.RepertoireStore(tmp_path / "r.json")
+    store.entries = []
+    a = store.create("Main", chess.WHITE)
+    a.rep.add_line(chess.Board(), line("e4", "e5", "Nf3"))
+    b = store.duplicate(a.id)
+    assert b.name == "Main (copy)" and [e.id for e in store.entries] == [a.id, b.id]
+    b.rep.remove(epd_after("e4"), "e7e5")
+    assert a.rep.size() == 3 and b.rep.size() == 1  # the copy is independent
+    snapshot = a.rep.to_dict()
+    a.rep.remove(rp.ROOT_EPD, "e2e4")
+    assert store.find(a.id).rep.size() == 0
+    store.restore(a.id, snapshot)
+    assert store.find(a.id).rep.size() == 3
+    store.remove(b.id)
+    assert [e.id for e in store.entries] == [a.id]
+    assert store.get(chess.BLACK).size() == 0  # a colour with none gets a fresh one
+    assert len(store.by_color(chess.BLACK)) == 1
+
+
+def test_store_reads_version_1_files(tmp_path):
+    path = tmp_path / "repertoire.json"
+    white = rp.Repertoire(chess.WHITE)
+    white.add_line(chess.Board(), line("e4", "e5"))
+    black = rp.Repertoire(chess.BLACK)
+    black.add_line(chess.Board(), line("d4", "Nf6"))
+    path.write_text(
+        json.dumps({"version": 1, "white": white.to_dict(), "black": black.to_dict()}),
+        encoding="utf-8",
+    )
+    store = rp.RepertoireStore(path)
+    assert [(e.name, e.rep.size()) for e in store.entries] == [
+        ("White repertoire", 2),
+        ("Black repertoire", 2),
+    ]
+    store.save()
+    assert json.loads(path.read_text(encoding="utf-8"))["version"] == 2

@@ -7,6 +7,7 @@ game on the board, no engine, and the user's moves checked before they are playe
 
 from __future__ import annotations
 
+import html
 import io
 import logging
 import threading
@@ -18,7 +19,7 @@ from typing import Any
 import chess
 import chess.pgn
 from PySide6.QtCore import QModelIndex, QSortFilterProxyModel, Qt, QTimer, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -26,7 +27,9 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSpinBox,
@@ -50,7 +53,14 @@ from ..lichess_api import (
     LichessRateLimited,
     MoveStats,
 )
-from ..repertoire import ROOT_EPD, Repertoire, RepertoireStore, TrainSession, TrainStep
+from ..repertoire import (
+    ROOT_EPD,
+    Repertoire,
+    RepertoireEntry,
+    RepertoireStore,
+    TrainSession,
+    TrainStep,
+)
 from ..ui_dispatch import Dispatcher
 from .board_widget import ANIM_MS, BoardWidget
 from .explorer_panel import COLUMNS, GAMES_COL, ExplorerModel
@@ -201,6 +211,7 @@ class RepertoirePanel(QWidget):
         self._build_body(layout)
         layout.addWidget(self._build_train_box())
         self._train_box.hide()
+        self._fill_picker()
 
     # ── Construction ──────────────────────────────────────────────────────────
 
@@ -208,13 +219,31 @@ class RepertoirePanel(QWidget):
         box = QWidget()
         col = QVBoxLayout(box)
         col.setContentsMargins(0, 0, 0, 0)
+        picker = QHBoxLayout()
+        self._picker = QComboBox()
+        self._picker.setToolTip(
+            "Which repertoire to build and train. You can keep several per colour."
+        )
+        self._picker.setMinimumContentsLength(18)
+        self._picker.currentIndexChanged.connect(self._on_entry_changed)
+        picker.addWidget(self._picker, 1)
+        for text, tip, slot in (
+            ("New…", "Start a new, empty repertoire for White or Black.", self.new_repertoire),
+            ("Rename…", "Change this repertoire's name.", self.rename_repertoire),
+            (
+                "Duplicate",
+                "Copy this repertoire (moves, review progress and game counts) to experiment with.",
+                self.duplicate_repertoire,
+            ),
+            ("Delete…", "Delete this repertoire and all its moves.", self.delete_repertoire),
+        ):
+            button = QPushButton(text)
+            button.setToolTip(tip)
+            button.clicked.connect(slot)
+            picker.addWidget(button)
+        col.addLayout(picker)
+
         row = QHBoxLayout()
-        self._color = QComboBox()
-        self._color.addItem("White repertoire", "white")
-        self._color.addItem("Black repertoire", "black")
-        self._color.setCurrentIndex(0 if self._cfg.repertoire_color == "white" else 1)
-        self._color.currentIndexChanged.connect(self._on_color_changed)
-        row.addWidget(self._color)
         row.addWidget(QLabel("Cover replies played in 1 of"))
         self._coverage = QSpinBox()
         self._coverage.setRange(5, 1000)
@@ -304,6 +333,28 @@ class RepertoirePanel(QWidget):
         self._tree.header().setStretchLastSection(False)
         self._tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self._tree.itemClicked.connect(self._on_tree_clicked)
+        self._tree.setToolTip(
+            "Your lines. Click a move to load it; right-click it (or press Delete) to remove it."
+        )
+        self._tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._tree_menu)
+        delete = QShortcut(QKeySequence(QKeySequence.StandardKey.Delete), self._tree)
+        delete.setContext(Qt.ShortcutContext.WidgetShortcut)
+        delete.activated.connect(self._remove_selected_tree_move)
+
+        self._undo: tuple[str, dict] | None = None
+        self._undo_row = QWidget()
+        undo_layout = QHBoxLayout(self._undo_row)
+        undo_layout.setContentsMargins(0, 0, 0, 0)
+        self._undo_label = QLabel("")
+        undo_button = QPushButton("Undo")
+        undo_button.setToolTip("Put back what the last removal took out.")
+        undo_button.clicked.connect(self.undo_remove)
+        undo_layout.addWidget(self._undo_label)
+        undo_layout.addWidget(undo_button)
+        undo_layout.addStretch(1)
+        self._undo_row.hide()
+        top_layout.addWidget(self._undo_row)
 
         self._games = QTreeWidget()
         self._games.setHeaderLabels(["Games", "Who left", "After", "Played", "Your move"])
@@ -368,9 +419,18 @@ class RepertoirePanel(QWidget):
     # ── Public API ────────────────────────────────────────────────────────────
 
     @property
+    def entry(self) -> RepertoireEntry:
+        """The repertoire chosen in the picker (falling back to the first of the colour)."""
+        found = self._store.find(self._cfg.repertoire_id)
+        if found is not None:
+            return found
+        color = chess.WHITE if self._cfg.repertoire_color == "white" else chess.BLACK
+        self._store.get(color)  # creates one if the colour has none
+        return self._store.by_color(color)[0]
+
+    @property
     def rep(self) -> Repertoire:
-        color = chess.WHITE if self._color.currentData() == "white" else chess.BLACK
-        return self._store.get(color)
+        return self.entry.rep
 
     @property
     def query(self) -> ExplorerQuery:
@@ -387,6 +447,7 @@ class RepertoirePanel(QWidget):
     def set_active(self, active: bool) -> None:
         self._active = active
         if active and not self.training:
+            self._fill_picker()
             self._rebuild_tree()
             self.refresh()
             self._fetch_missing_stats()
@@ -565,8 +626,10 @@ class RepertoirePanel(QWidget):
                 break
             board.push(move)
         size = rep.size()
-        name = "White" if rep.color == chess.WHITE else "Black"
-        head = f"<b>{name}</b>: {size} move{'s' if size != 1 else ''}"
+        side = "White" if rep.color == chess.WHITE else "Black"
+        head = (
+            f"<b>{html.escape(self.entry.name)}</b> ({side}): {size} move{'s' if size != 1 else ''}"
+        )
         if size == 0:
             text = f"{head} · play a line on the board and press <b>Add line to here</b>."
         elif left_at is None:
@@ -589,14 +652,79 @@ class RepertoirePanel(QWidget):
 
     # ── Settings ──────────────────────────────────────────────────────────────
 
-    def _on_color_changed(self, *_args: object) -> None:
-        self._cfg.repertoire_color = str(self._color.currentData())
+    def _fill_picker(self) -> None:
+        """List the repertoires, White ones first, each with its move count."""
+        current = self.entry
+        self._picker.blockSignals(True)
+        self._picker.clear()
+        for color, label in ((chess.WHITE, "White"), (chess.BLACK, "Black")):
+            for e in self._store.by_color(color):
+                self._picker.addItem(f"{label} · {e.name} · {e.rep.size()} moves", e.id)
+        self._picker.setCurrentIndex(max(0, self._picker.findData(current.id)))
+        self._picker.blockSignals(False)
+
+    def _choose(self, entry: RepertoireEntry) -> None:
+        self._cfg.repertoire_id = entry.id
+        self._cfg.repertoire_color = "white" if entry.color == chess.WHITE else "black"
         self._save_config()
+        self._undo = None
+        self._undo_row.hide()
         self._gaps_cache = {}
         self._games.hide()
+        self._fill_picker()
         self._rebuild_tree()
         self.refresh()
         self._fetch_missing_stats(restart=True)
+
+    def _on_entry_changed(self, *_args: object) -> None:
+        entry = self._store.find(self._picker.currentData())
+        if entry is not None and entry.id != self.entry.id:
+            self._choose(entry)
+
+    def new_repertoire(self) -> None:
+        name, ok = QInputDialog.getText(self, "New repertoire", "Name:")
+        if not ok:
+            return
+        colours = ["White", "Black"]
+        current = 0 if self.entry.color == chess.WHITE else 1
+        colour, ok = QInputDialog.getItem(
+            self, "New repertoire", "Colour:", colours, current, False
+        )
+        if not ok:
+            return
+        entry = self._store.create(name, chess.WHITE if colour == "White" else chess.BLACK)
+        self._save()
+        self._choose(entry)
+
+    def rename_repertoire(self) -> None:
+        entry = self.entry
+        name, ok = QInputDialog.getText(self, "Rename repertoire", "Name:", text=entry.name)
+        if ok:
+            self._store.rename(entry.id, name)
+            self._save()
+            self._fill_picker()
+            self._update_status()
+
+    def duplicate_repertoire(self) -> None:
+        copy = self._store.duplicate(self.entry.id)
+        if copy is not None:
+            self._save()
+            self._choose(copy)
+
+    def delete_repertoire(self) -> None:
+        entry = self.entry
+        answer = QMessageBox.question(
+            self,
+            "Delete repertoire?",
+            f"Delete “{entry.name}” and its {entry.rep.size()} moves? This can't be undone.",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._store.remove(entry.id)
+        others = self._store.by_color(entry.color) or self._store.entries
+        fallback = others[0] if others else self._store.create("", entry.color)
+        self._save()
+        self._choose(fallback)
 
     def _on_coverage_changed(self, value: int) -> None:
         self._cfg.repertoire_coverage = value
@@ -607,8 +735,8 @@ class RepertoirePanel(QWidget):
     def _on_ratings_changed(self, *_args: object) -> None:
         self._cfg.repertoire_ratings = [r for r, b in self._rating_boxes.items() if b.isChecked()]
         self._save_config()
-        for color in (chess.WHITE, chess.BLACK):  # counts at other ratings no longer apply
-            self._store.get(color).stats.clear()
+        for entry in self._store.entries:  # counts at other ratings no longer apply
+            entry.rep.stats.clear()
         self._gaps_cache = {}
         self._save()
         self.refresh()
@@ -661,14 +789,39 @@ class RepertoirePanel(QWidget):
         if last not in rep.moves_at(board.epd()):
             self._status.setText("That move is not in your repertoire.")
             return
+        self.remove_move(board.epd(), last)
+
+    def remove_move(self, epd: str, uci: str) -> None:
+        """Remove one move and whatever only it led to; offers Undo."""
+        rep = self.rep
+        if uci not in rep.moves_at(epd):
+            return
+        snapshot = rep.to_dict()
+        san = rep.moves_at(epd)[uci]
         before = rep.size()
-        rep.remove(board.epd(), last)
+        rep.remove(epd, uci)
         removed = before - rep.size()
-        self._after_edit(f"Removed {removed} move{'s' if removed != 1 else ''}.")
+        self._undo = (self.entry.id, snapshot)
+        after = (
+            f" and {removed - 1} move{'s' if removed != 2 else ''} after it" if removed > 1 else ""
+        )
+        self._undo_label.setText(f"Removed {san}{after}.")
+        self._undo_row.show()
+        self._after_edit("")
+
+    def undo_remove(self) -> None:
+        if self._undo is None:
+            return
+        entry_id, snapshot = self._undo
+        self._store.restore(entry_id, snapshot)
+        self._undo = None
+        self._undo_row.hide()
+        self._after_edit("Restored.")
 
     def _after_edit(self, message: str) -> None:
         self._gaps_cache = {}
         self._save()
+        self._fill_picker()
         self._rebuild_tree()
         self.refresh()
         self._explorer_status.setText(message)
@@ -733,6 +886,31 @@ class RepertoirePanel(QWidget):
 
         add(None, chess.Board(), [])
         self._tree.expandToDepth(3)
+
+    def _tree_item_move(self, item: QTreeWidgetItem | None) -> tuple[str, str] | None:
+        """(position EPD, UCI) of the move a tree item shows."""
+        path = item.data(0, Qt.ItemDataRole.UserRole) if item is not None else None
+        if not path:
+            return None
+        board = chess.Board()
+        for uci in path[:-1]:
+            board.push(chess.Move.from_uci(uci))
+        return board.epd(), path[-1]
+
+    def _tree_menu(self, pos) -> None:  # noqa: ANN001 - QPoint
+        item = self._tree.itemAt(pos)
+        move = self._tree_item_move(item)
+        if move is None:
+            return
+        menu = QMenu(self)
+        remove = menu.addAction(f"Remove {item.text(0).split('   ')[0]} and what only it leads to")
+        if menu.exec(self._tree.viewport().mapToGlobal(pos)) is remove:
+            self.remove_move(*move)
+
+    def _remove_selected_tree_move(self) -> None:
+        move = self._tree_item_move(self._tree.currentItem())
+        if move is not None:
+            self.remove_move(*move)
 
     def _on_tree_clicked(self, item: QTreeWidgetItem, _col: int) -> None:
         path = item.data(0, Qt.ItemDataRole.UserRole) or []

@@ -18,6 +18,7 @@ import logging
 import os
 import random
 import time
+import uuid
 from collections import deque
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -28,7 +29,7 @@ import chess
 
 log = logging.getLogger(__name__)
 
-STORE_VERSION = 1
+STORE_VERSION = 2  # 1: one White and one Black repertoire
 ROOT_EPD = chess.Board().epd()
 DAY = 86_400.0
 START_EASE = 2.5
@@ -393,7 +394,7 @@ class Repertoire:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "nodes": self.nodes,
+            "nodes": {e: dict(m) for e, m in self.nodes.items()},  # a copy: safe to keep
             "stats": {
                 e: [s.total, {u: list(v) for u, v in s.moves.items()}]
                 for e, s in self.stats.items()
@@ -527,29 +528,149 @@ class TrainSession:
 # ── Store ─────────────────────────────────────────────────────────────────────
 
 
+DEFAULT_NAMES = {chess.WHITE: "White repertoire", chess.BLACK: "Black repertoire"}
+
+
+def _new_id() -> str:
+    return uuid.uuid4().hex[:12]
+
+
+def _clean_name(name: str, color: chess.Color) -> str:
+    text = " ".join(name.split())[:80]
+    return text or DEFAULT_NAMES[color]
+
+
+@dataclass
+class RepertoireEntry:
+    """One named repertoire: its colour, name and moves (with review cards and counts)."""
+
+    id: str
+    name: str
+    rep: Repertoire
+
+    @property
+    def color(self) -> chess.Color:
+        return self.rep.color
+
+
 class RepertoireStore:
-    """Both colours' repertoires in one JSON file written atomically. GUI thread only."""
+    """Any number of named repertoires per colour, in one JSON file written atomically.
+
+    The file is version 2 (``{"version": 2, "repertoires": [...]}``, the same shape as the web
+    version's). A version 1 file (one White and one Black repertoire) loads as two entries.
+    GUI thread only.
+    """
 
     def __init__(self, path: Path) -> None:
         self.path = path
-        self.white = Repertoire(chess.WHITE)
-        self.black = Repertoire(chess.BLACK)
+        self.entries: list[RepertoireEntry] = []
         self._load()
+        if not self.entries:
+            self.entries = [
+                RepertoireEntry(_new_id(), DEFAULT_NAMES[c], Repertoire(c))
+                for c in (chess.WHITE, chess.BLACK)
+            ]
+
+    # ── Queries ───────────────────────────────────────────────────────────────
+
+    def find(self, entry_id: str | None) -> RepertoireEntry | None:
+        return next((e for e in self.entries if e.id == entry_id), None)
+
+    def by_color(self, color: chess.Color) -> list[RepertoireEntry]:
+        return [e for e in self.entries if e.color == color]
 
     def get(self, color: chess.Color) -> Repertoire:
-        return self.white if color == chess.WHITE else self.black
+        """The first repertoire of a colour (created if there is none)."""
+        entries = self.by_color(color)
+        return (entries[0] if entries else self.create(DEFAULT_NAMES[color], color)).rep
+
+    # ── Changes ───────────────────────────────────────────────────────────────
+
+    def create(self, name: str, color: chess.Color) -> RepertoireEntry:
+        entry = RepertoireEntry(_new_id(), _clean_name(name, color), Repertoire(color))
+        self.entries.append(entry)
+        return entry
+
+    def rename(self, entry_id: str, name: str) -> None:
+        entry = self.find(entry_id)
+        if entry is not None:
+            entry.name = _clean_name(name, entry.color)
+
+    def duplicate(self, entry_id: str, name: str | None = None) -> RepertoireEntry | None:
+        """A copy with its own moves, cards and counts, placed after the original."""
+        entry = self.find(entry_id)
+        if entry is None:
+            return None
+        rep = Repertoire.from_dict(entry.color, json.loads(json.dumps(entry.rep.to_dict())))
+        copy = RepertoireEntry(
+            _new_id(), _clean_name(name or f"{entry.name} (copy)", entry.color), rep
+        )
+        self.entries.insert(self.entries.index(entry) + 1, copy)
+        return copy
+
+    def remove(self, entry_id: str) -> None:
+        self.entries = [e for e in self.entries if e.id != entry_id]
+
+    def restore(self, entry_id: str, data: dict[str, Any]) -> None:
+        """Put a repertoire's moves back to an earlier ``to_dict()`` state (undo)."""
+        entry = self.find(entry_id)
+        if entry is not None:
+            entry.rep = Repertoire.from_dict(entry.color, data)
+
+    # ── File ──────────────────────────────────────────────────────────────────
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "version": STORE_VERSION,
+            "repertoires": [
+                {
+                    "id": e.id,
+                    "name": e.name,
+                    "color": "white" if e.color == chess.WHITE else "black",
+                    **e.rep.to_dict(),
+                }
+                for e in self.entries
+            ],
+        }
+
+    @classmethod
+    def entries_from_dict(cls, raw: Any) -> list[RepertoireEntry]:
+        """Version 1 or 2 data to entries. Raises ``ValueError``/``TypeError`` if malformed."""
+        if not isinstance(raw, dict):
+            raise ValueError("top-level JSON value is not an object")
+        if isinstance(raw.get("repertoires"), list):
+            entries = []
+            for item in raw["repertoires"]:
+                if not isinstance(item, dict) or item.get("color") not in ("white", "black"):
+                    raise ValueError("repertoire entry needs a colour of white or black")
+                color = chess.WHITE if item["color"] == "white" else chess.BLACK
+                entries.append(
+                    RepertoireEntry(
+                        str(item.get("id") or _new_id()),
+                        _clean_name(str(item.get("name") or ""), color),
+                        Repertoire.from_dict(color, item),
+                    )
+                )
+            return entries
+        return [
+            RepertoireEntry(
+                _new_id(),
+                DEFAULT_NAMES[chess.WHITE],
+                Repertoire.from_dict(chess.WHITE, raw.get("white") or {}),
+            ),
+            RepertoireEntry(
+                _new_id(),
+                DEFAULT_NAMES[chess.BLACK],
+                Repertoire.from_dict(chess.BLACK, raw.get("black") or {}),
+            ),
+        ]
 
     def save(self) -> None:
         """Raises ``OSError`` on failure."""
-        data = {
-            "version": STORE_VERSION,
-            "white": self.white.to_dict(),
-            "black": self.black.to_dict(),
-        }
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_name(self.path.name + ".tmp")
         try:
-            tmp.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+            tmp.write_text(json.dumps(self.to_dict(), separators=(",", ":")), encoding="utf-8")
             os.replace(tmp, self.path)
         except OSError:
             tmp.unlink(missing_ok=True)
@@ -564,11 +685,7 @@ class RepertoireStore:
             log.warning("Could not read %s (%s); starting with an empty repertoire", self.path, exc)
             return
         try:
-            raw = json.loads(text)
-            if not isinstance(raw, dict):
-                raise ValueError("top-level JSON value is not an object")
-            white = Repertoire.from_dict(chess.WHITE, raw.get("white") or {})
-            black = Repertoire.from_dict(chess.BLACK, raw.get("black") or {})
+            entries = self.entries_from_dict(json.loads(text))
         except (ValueError, TypeError, KeyError, AttributeError, IndexError) as exc:
             backup = self.path.with_name(self.path.name + ".bak")
             log.warning(
@@ -579,4 +696,4 @@ class RepertoireStore:
             except OSError as os_exc:
                 log.warning("Could not move the corrupt repertoire file aside: %s", os_exc)
             return
-        self.white, self.black = white, black
+        self.entries = entries

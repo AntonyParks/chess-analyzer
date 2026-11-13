@@ -84,7 +84,9 @@ def test_san_line():
 
 def test_add_line_marks_and_transpositions(window):
     panel = window._repertoire
-    panel._color.setCurrentIndex(1)  # Black
+    panel._picker.setCurrentIndex(
+        panel._picker.findData(window._repertoire_store.by_color(chess.BLACK)[0].id)
+    )
     play(window, "d4", "d5", "c4", "e6")
     panel.add_line_to_here()
     rep = panel.rep
@@ -155,3 +157,48 @@ def test_new_moves_are_shown_first(window):
     window._board._try_move(chess.D2, chess.D4, animated=False)
     assert "Learned" in panel._train_feedback.text()
     assert panel.rep.cards[ROOT_EPD].learned
+
+
+def test_named_repertoires_create_rename_duplicate_delete(window, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog, QMessageBox
+
+    panel = window._repertoire
+    store = window._repertoire_store
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Sharp 1.e4", True))
+    monkeypatch.setattr(QInputDialog, "getItem", lambda *a, **k: ("White", True))
+    panel.new_repertoire()
+    assert panel.entry.name == "Sharp 1.e4" and panel.entry.color == chess.WHITE
+    assert [e.name for e in store.by_color(chess.WHITE)] == ["White repertoire", "Sharp 1.e4"]
+    assert "Sharp 1.e4" in panel._picker.currentText()
+
+    play(window, "e4", "e5", "Nf3")
+    panel.add_line_to_here()
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Italian", True))
+    panel.rename_repertoire()
+    assert panel.entry.name == "Italian" and "Italian · 3 moves" in panel._picker.currentText()
+
+    panel.duplicate_repertoire()
+    assert panel.entry.name == "Italian (copy)" and panel.rep.size() == 3
+    copy_id = panel.entry.id
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.StandardButton.Yes)
+    panel.delete_repertoire()
+    assert store.find(copy_id) is None and panel.entry.color == chess.WHITE
+
+    again = type(store)(store.path)  # saved to disk
+    assert [e.name for e in again.by_color(chess.WHITE)] == ["White repertoire", "Italian"]
+
+
+def test_remove_a_move_from_the_tree_and_undo(window):
+    panel = window._repertoire
+    play(window, "e4", "e5", "Nf3", "Nc6")
+    panel.add_line_to_here()
+    after_e4 = chess.Board()
+    after_e4.push_san("e4")
+    panel.remove_move(after_e4.epd(), "e7e5")
+    assert panel.rep.size() == 1
+    assert (
+        not panel._undo_row.isHidden()
+        and "Removed e5 and 2 moves after it" in panel._undo_label.text()
+    )
+    panel.undo_remove()
+    assert panel.rep.size() == 4 and panel._undo_row.isHidden()

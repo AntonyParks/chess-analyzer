@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Added
+- **Several named repertoires per colour**: New, Rename, Duplicate and Delete in the Repertoire
+  tab; remove any move from the lines tree (right-click or Delete) with Undo. `repertoire.json`
+  is now version 2 (the web version's format); version 1 files load as one White and one Black.
 - **Opening repertoire** (a new **Repertoire** tab, F8): build a White and a Black repertoire on
   the board with Lichess game counts and Stockfish evaluations for every candidate move;
   transpositions marked (↪ joins …); coverage gaps flagged and **Go to biggest gap**; spaced-
