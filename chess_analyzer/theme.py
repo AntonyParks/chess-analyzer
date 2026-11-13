@@ -84,5 +84,6 @@ def score_to_color(t: float) -> str:
 
 
 def rank_color(t: float) -> str:
-    """Gold for the best move (t ≥ 1), otherwise the red→green ramp."""
-    return GOLD if t >= 1.0 else score_to_color(t)
+    """The red→green ramp: the best move (t = 1) is the strongest green. (Gold read as a
+    warning, so the best move is marked with a gold star on the board instead.)"""
+    return score_to_color(t)

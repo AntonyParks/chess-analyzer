@@ -63,6 +63,8 @@ def test_pieces_heatmap_and_bar_render_without_error():
         heatmap={chess.E2: [(move, 0.3), (chess.Move.from_uci("e2e3"), 0.1)]},
         rank_map={"e2e4": 1.0, "e2e3": 0.5},
     )
-    # Something was drawn over the e2 pawn's square (heatmap gold band at the top).
+    # The e2 pawn's square: the best move's band (strongest green) on top, a gold star in
+    # the top-right corner.
     x, y = _square_centre(4, 1, 48, False)
-    assert image.getpixel((x, y - 20)) == _rgb(theme.GOLD)
+    assert image.getpixel((x - 16, y - 20)) == _rgb(theme.rank_color(1.0))
+    assert image.getpixel((x + 16, y - 16)) == _rgb(theme.GOLD)

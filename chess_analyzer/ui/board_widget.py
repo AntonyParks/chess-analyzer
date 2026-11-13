@@ -595,6 +595,8 @@ class BoardWidget(QWidget):
         self._paint_flash(painter)
         self._paint_selection(painter)
         self._paint_pieces(painter, board)
+        if self._heatmap_on and not self._puzzle_mode:
+            self._paint_best_star(painter)
         self._paint_arrows(painter)
         self._paint_hover_evals(painter)
         self._paint_coordinates(painter)
@@ -629,7 +631,9 @@ class BoardWidget(QWidget):
             if n == 0:
                 continue
             rect = self._square_rect(square)
-            for i, (move, _pawns) in enumerate(move_scores):
+            # Best move in the top band, down to the worst at the bottom.
+            ordered = sorted(move_scores, key=lambda ms: -self._rank_map.get(ms[0].uci(), 0.5))
+            for i, (move, _pawns) in enumerate(ordered):
                 colour = QColor(theme.rank_color(self._rank_map.get(move.uci(), 0.5)))
                 y0 = rect.top() + round(i * rect.height() / n)
                 y1 = rect.top() + round((i + 1) * rect.height() / n)
@@ -684,6 +688,25 @@ class BoardWidget(QWidget):
         painter.drawPixmap(
             QPointF(centre.x() - pixmap.width() / 2, centre.y() - pixmap.height() / 2), pixmap
         )
+
+    def _paint_best_star(self, painter: QPainter) -> None:
+        """A small gold star in the top-right corner of the square whose piece has the best move."""
+        if self._best_move is None or not self._heatmap_data:
+            return
+        rect = self._square_rect(self._best_move.from_square)
+        outer = max(5.0, self._sq * 0.13)
+        inner = outer * 0.45
+        cx = rect.right() - outer - self._sq * 0.04
+        cy = rect.top() + outer + self._sq * 0.04
+        points = []
+        for i in range(10):
+            radius = outer if i % 2 == 0 else inner
+            angle = -math.pi / 2 + i * math.pi / 5
+            points.append(QPointF(cx + radius * math.cos(angle), cy + radius * math.sin(angle)))
+        painter.setPen(QPen(QColor("#5A4500"), max(1.0, self._sq / 60)))
+        painter.setBrush(QColor(theme.GOLD))
+        painter.drawPolygon(QPolygonF(points))
+        painter.setPen(Qt.PenStyle.NoPen)
 
     def _paint_arrows(self, painter: QPainter) -> None:
         width = max(4, self._sq / 11)

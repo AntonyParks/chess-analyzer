@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 
 import chess
@@ -69,7 +70,8 @@ def render(
         for sq, move_scores in heatmap.items():
             n = len(move_scores)
             x, y = origin(sq)
-            for i, (move, _pawns) in enumerate(move_scores):
+            ranked = sorted(move_scores, key=lambda ms: -(rank_map or {}).get(ms[0].uci(), 0.5))
+            for i, (move, _pawns) in enumerate(ranked):  # best move on top
                 t = (rank_map or {}).get(move.uci(), 0.5)
                 y0 = y + round(i * square / n)
                 y1 = y + round((i + 1) * square / n)
@@ -89,6 +91,17 @@ def render(
             continue
         x, y = origin(sq)
         image.alpha_composite(img, (x + 4, y + 4))
+
+    # A gold star on the square whose piece has the best move (as on the board)
+    if heatmap and rank_map:
+        best = max(
+            ((m, rank_map.get(m.uci(), 0.0)) for scores in heatmap.values() for m, _ in scores),
+            key=lambda mr: mr[1],
+            default=None,
+        )
+        if best is not None:
+            x, y = origin(best[0].from_square)
+            _draw_star(draw, x + square - square * 0.17, y + square * 0.17, square * 0.13)
 
     # Coordinates
     files = "hgfedcba" if flipped else "abcdefgh"
@@ -112,6 +125,16 @@ def render(
     if with_eval_bar:
         _draw_eval_bar(draw, top, board_px, position_cp, flipped, font)
     return image.convert("RGB")
+
+
+def _draw_star(draw: ImageDraw.ImageDraw, cx: float, cy: float, outer: float) -> None:
+    inner = outer * 0.45
+    points = []
+    for i in range(10):
+        radius = outer if i % 2 == 0 else inner
+        angle = -math.pi / 2 + i * math.pi / 5
+        points.append((cx + radius * math.cos(angle), cy + radius * math.sin(angle)))
+    draw.polygon(points, fill=theme.GOLD, outline="#5A4500")
 
 
 def _draw_eval_bar(
